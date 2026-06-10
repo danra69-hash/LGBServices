@@ -68,6 +68,7 @@ public class FormTemplateDto
     public string AddressedTo { get; set; } = string.Empty;
     public string DivisionLabel { get; set; } = string.Empty;
     public string IssuerEntity { get; set; } = string.Empty;
+    public string PackageServiceName { get; set; } = string.Empty;
     public List<FormFieldDefinitionDto> Fields { get; set; } = new();
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; }

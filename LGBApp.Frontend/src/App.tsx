@@ -430,6 +430,7 @@ export default function App() {
     role: string;
     jobTitle?: string;
     canRecommendMoi?: boolean;
+    canApproveMoiIntake?: boolean;
     customerId?: number;
   }) => {
     try {
@@ -441,6 +442,7 @@ export default function App() {
         role: data.role,
         jobTitle: data.jobTitle,
         canRecommendMoi: data.canRecommendMoi,
+        canApproveMoiIntake: data.canApproveMoiIntake,
         customerId: data.customerId,
       });
       setUserRefreshKey((k) => k + 1);
@@ -977,6 +979,7 @@ export default function App() {
                   package={selectedPackageWork.package}
                   users={apiUsers}
                   userIsAdmin={userIsAdmin}
+                  canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
                   refreshKey={refreshKey}
                   onBack={() => setSelectedPackageWork(null)}
                   onOpenTask={handleOpenFormTask}
@@ -1040,6 +1043,7 @@ export default function App() {
               package={selectedPackageWork.package}
               users={apiUsers}
               userIsAdmin={userIsAdmin}
+              canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
               refreshKey={refreshKey}
               onBack={() => setSelectedPackageWork(null)}
               onOpenTask={handleOpenFormTask}

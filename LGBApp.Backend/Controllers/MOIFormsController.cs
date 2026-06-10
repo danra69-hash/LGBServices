@@ -52,8 +52,10 @@ public class MOIFormsController : ControllerBase
         if (request.JobId.HasValue)
             formData["jobId"] = request.JobId.Value;
 
+        var serviceName = request.Data.GetValueOrDefault("service")?.ToString()
+            ?? request.Data.GetValueOrDefault("typeOfDocument")?.ToString();
         var templateCode = request.FormTemplateCode
-            ?? WorkflowService.ResolveMoiTemplateCode(customer, group);
+            ?? await WorkflowService.ResolveMoiTemplateCodeAsync(_context, customer, group, serviceName);
 
         var form = new MOIForm
         {

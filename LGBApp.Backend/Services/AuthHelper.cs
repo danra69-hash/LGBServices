@@ -41,7 +41,7 @@ public static class AuthHelper
     public static bool CanManageSystem(ClaimsPrincipal user) => IsAdmin(user);
 
     public static bool CanApproveMoiIntake(ClaimsPrincipal user) =>
-        IsAdmin(user) || string.Equals(
+        string.Equals(
             user.FindFirstValue("can_approve_moi_intake"),
             "true",
             StringComparison.OrdinalIgnoreCase);

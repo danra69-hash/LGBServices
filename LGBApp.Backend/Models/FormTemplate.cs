@@ -11,6 +11,8 @@ public class FormTemplate
     public string AddressedTo { get; set; } = "Head of Legal & Secretarial Department";
     public string DivisionLabel { get; set; } = "Secretarial Division";
     public string IssuerEntity { get; set; } = string.Empty;
+    /// <summary>When set, this MOI template is used for package work items with this service name.</summary>
+    public string PackageServiceName { get; set; } = string.Empty;
     public string FieldsJson { get; set; } = "[]";
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; } = true;

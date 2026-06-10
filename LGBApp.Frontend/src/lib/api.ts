@@ -8,6 +8,7 @@ export interface UserResponse {
   role: string;
   jobTitle: string;
   canRecommendMoi: boolean;
+  canApproveMoiIntake: boolean;
   customerId?: number;
   customerName?: string;
   isVerified: boolean;
@@ -235,6 +236,7 @@ export interface FormTemplateDto {
   addressedTo: string;
   divisionLabel: string;
   issuerEntity: string;
+  packageServiceName?: string;
   fields: { key: string; label: string; type: string; required: boolean; section: string }[];
   isDefault: boolean;
   isActive: boolean;
@@ -510,6 +512,7 @@ export async function createUser(data: {
   role: string;
   jobTitle?: string;
   canRecommendMoi?: boolean;
+  canApproveMoiIntake?: boolean;
   customerId?: number;
 }): Promise<UserResponse> {
   return request<UserResponse>('/api/users', {
@@ -520,7 +523,16 @@ export async function createUser(data: {
 
 export async function updateUser(
   id: number,
-  data: { email: string; name: string; mobile: string; role: string; jobTitle?: string; canRecommendMoi?: boolean; customerId?: number },
+  data: {
+    email: string;
+    name: string;
+    mobile: string;
+    role: string;
+    jobTitle?: string;
+    canRecommendMoi?: boolean;
+    canApproveMoiIntake?: boolean;
+    customerId?: number;
+  },
 ): Promise<void> {
   return request<void>(`/api/users/${id}`, {
     method: 'PUT',
@@ -972,10 +984,16 @@ export async function getFormTemplates(formType?: string): Promise<FormTemplateD
   return request<FormTemplateDto[]>(`/api/formtemplates${qs}`);
 }
 
-export async function resolveFormTemplate(formType: string, company?: string, templateCode?: string): Promise<FormTemplateDto> {
+export async function resolveFormTemplate(
+  formType: string,
+  company?: string,
+  templateCode?: string,
+  service?: string,
+): Promise<FormTemplateDto> {
   const params = new URLSearchParams({ formType });
   if (company) params.set('company', company);
   if (templateCode) params.set('templateCode', templateCode);
+  if (service) params.set('service', service);
   return request<FormTemplateDto>(`/api/formtemplates/resolve?${params}`);
 }
 

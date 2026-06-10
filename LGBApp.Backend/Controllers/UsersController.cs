@@ -103,6 +103,7 @@ public class UsersController : ControllerBase
             Role = role,
             JobTitle = UserRoles.IsExternalRole(role) ? string.Empty : (request.JobTitle ?? string.Empty),
             CanRecommendMoi = UserRoles.IsExternalRole(role) ? false : request.CanRecommendMoi,
+            CanApproveMoiIntake = UserRoles.IsExternalRole(role) ? false : request.CanApproveMoiIntake,
             CustomerId = customerId,
             InvitedByUserId = inviterId,
             IsVerified = AuthHelper.IsClientAdmin(User),
@@ -152,6 +153,7 @@ public class UsersController : ControllerBase
         user.Role = request.Role;
         user.JobTitle = UserRoles.IsExternalRole(request.Role) ? string.Empty : (request.JobTitle ?? string.Empty);
         user.CanRecommendMoi = UserRoles.IsExternalRole(request.Role) ? false : request.CanRecommendMoi;
+        user.CanApproveMoiIntake = UserRoles.IsExternalRole(request.Role) ? false : request.CanApproveMoiIntake;
         user.CustomerId = customerId;
 
         await _context.SaveChangesAsync();

@@ -44,7 +44,8 @@ public static class JobFormProvisioner
         if (customer != null && !string.IsNullOrWhiteSpace(customer.DivisionGroupCode))
             group = await context.DivisionGroups.FirstOrDefaultAsync(g => g.Code == customer.DivisionGroupCode);
 
-        var templateCode = WorkflowService.ResolveMoiTemplateCode(customer, group);
+        var templateCode = await WorkflowService.ResolveMoiTemplateCodeAsync(
+            context, customer, group, job.Service);
         var now = DateTime.UtcNow;
 
         context.MOIForms.Add(new MOIForm

@@ -31,7 +31,8 @@ public class FormTemplatesController : ControllerBase
     public async Task<ActionResult<FormTemplateDto>> Resolve(
         [FromQuery] string formType,
         [FromQuery] string? company,
-        [FromQuery] string? templateCode)
+        [FromQuery] string? templateCode,
+        [FromQuery] string? service)
     {
         if (!string.IsNullOrWhiteSpace(templateCode))
         {
@@ -51,7 +52,7 @@ public class FormTemplatesController : ControllerBase
         }
 
         var code = formType == "MOI"
-            ? WorkflowService.ResolveMoiTemplateCode(customer, group)
+            ? await WorkflowService.ResolveMoiTemplateCodeAsync(_context, customer, group, service)
             : WorkflowService.ResolveMoaTemplateCode(customer, group);
 
         var template = await _context.FormTemplates

@@ -81,7 +81,7 @@ export function AdminFormTemplates({ refreshKey = 0 }: AdminFormTemplatesProps) 
         <div>
           <h3 className="text-lg font-medium">MOI / MOA Form Models</h3>
           <p className="text-sm text-muted-foreground mt-1">
-            Override issuer, headers, and fields per entity. Customers can override via template code.
+            Override issuer, headers, and fields per entity. Link MOI templates to package service items by name.
           </p>
         </div>
         <button type="button" onClick={addTemplate} className="text-sm px-3 py-1.5 border border-border rounded-lg">
@@ -144,6 +144,20 @@ export function AdminFormTemplates({ refreshKey = 0 }: AdminFormTemplatesProps) 
               onChange={(e) => setSelected({ ...selected, issuerEntity: e.target.value })}
             />
           </div>
+          {selected.formType === 'MOI' && (
+            <div>
+              <label className="block text-sm mb-1">Package service item</label>
+              <input
+                className="w-full px-3 py-2 border border-border rounded-lg"
+                value={selected.packageServiceName ?? ''}
+                onChange={(e) => setSelected({ ...selected, packageServiceName: e.target.value })}
+                placeholder="e.g. Annual Return, Prepare Resolution"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                When a client issues MOI for this package line, this form model is used.
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-sm mb-1">Description (header)</label>
             <input

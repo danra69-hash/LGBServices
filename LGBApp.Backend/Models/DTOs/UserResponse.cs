@@ -9,6 +9,7 @@ public class UserResponse
     public string Role { get; set; } = string.Empty;
     public string JobTitle { get; set; } = string.Empty;
     public bool CanRecommendMoi { get; set; }
+    public bool CanApproveMoiIntake { get; set; }
     public int? CustomerId { get; set; }
     public string? CustomerName { get; set; }
     public bool IsVerified { get; set; }

@@ -15,6 +15,13 @@ public static class InternalStaffSeeder
         ("nadia@lgb.test", "Nadia", UserRoles.User, "Resolution preparation", false, false),
     ];
 
+    private static readonly string[] IntakeApproverEmails =
+    [
+        "sharon@lgb.test",
+        "ryannnism@gmail.com",
+        "danra69@gmail.com",
+    ];
+
     public static void Seed(AppDbContext context)
     {
         foreach (var (email, name, role, jobTitle, canApproveIntake, canRecommend) in Staff)
@@ -44,6 +51,13 @@ public static class InternalStaffSeeder
                 MustChangePassword = true,
                 CreatedAt = DateTime.UtcNow,
             });
+        }
+
+        foreach (var email in IntakeApproverEmails)
+        {
+            var user = context.Users.FirstOrDefault(u => u.Email == email);
+            if (user != null)
+                user.CanApproveMoiIntake = true;
         }
 
         context.SaveChanges();

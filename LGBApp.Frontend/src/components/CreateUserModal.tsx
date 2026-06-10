@@ -12,6 +12,7 @@ export interface CreateUserFormData {
   role: string;
   jobTitle?: string;
   canRecommendMoi?: boolean;
+  canApproveMoiIntake?: boolean;
   customerId?: number;
 }
 
@@ -44,6 +45,7 @@ export function CreateUserModal({
     role: isClientTeamMode ? ROLES.ClientAdmin : ROLES.User,
     jobTitle: '',
     canRecommendMoi: false,
+    canApproveMoiIntake: false,
     customerId: undefined,
   });
 
@@ -236,6 +238,14 @@ export function CreateUserModal({
                     onChange={(e) => setFormData({ ...formData, canRecommendMoi: e.target.checked })}
                   />
                   Can recommend MOI (division group recommender)
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.canApproveMoiIntake)}
+                    onChange={(e) => setFormData({ ...formData, canApproveMoiIntake: e.target.checked })}
+                  />
+                  Can approve MOI intake (named intake approver)
                 </label>
               </>
             )}

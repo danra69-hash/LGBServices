@@ -15,6 +15,7 @@ public static class TemplateMapper
         AddressedTo = t.AddressedTo,
         DivisionLabel = t.DivisionLabel,
         IssuerEntity = t.IssuerEntity,
+        PackageServiceName = t.PackageServiceName,
         Fields = JsonHelper.Deserialize<List<FormFieldDefinitionDto>>(t.FieldsJson),
         IsDefault = t.IsDefault,
         IsActive = t.IsActive,
@@ -71,6 +72,7 @@ public static class TemplateMapper
         entity.AddressedTo = dto.AddressedTo;
         entity.DivisionLabel = dto.DivisionLabel;
         entity.IssuerEntity = dto.IssuerEntity;
+        entity.PackageServiceName = dto.PackageServiceName?.Trim() ?? string.Empty;
         entity.FieldsJson = JsonHelper.Serialize(dto.Fields);
         entity.IsDefault = dto.IsDefault;
         entity.IsActive = dto.IsActive;

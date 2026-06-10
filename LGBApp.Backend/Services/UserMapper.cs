@@ -14,6 +14,7 @@ public static class UserMapper
         Role = user.Role,
         JobTitle = user.JobTitle,
         CanRecommendMoi = user.CanRecommendMoi,
+        CanApproveMoiIntake = user.CanApproveMoiIntake,
         CustomerId = user.CustomerId,
         CustomerName = user.Customer?.Company,
         IsVerified = user.IsVerified,

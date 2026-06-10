@@ -103,8 +103,9 @@ public static class SqliteSchemaMigrator
 
         context.Database.ExecuteSqlRaw("""
             UPDATE "Users" SET "Role" = 'ClientAdmin' WHERE "Role" = 'Client';
-            UPDATE "Users" SET "CanApproveMoiIntake" = 1 WHERE "Role" = 'Admin';
             """);
+
+        EnsureColumn(context, "FormTemplates", "PackageServiceName", "TEXT NOT NULL DEFAULT ''");
 
         context.Database.ExecuteSqlRaw("""
             CREATE TABLE IF NOT EXISTS "BillingParties" (

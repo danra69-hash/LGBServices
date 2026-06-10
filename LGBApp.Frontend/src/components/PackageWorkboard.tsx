@@ -21,6 +21,7 @@ interface PackageWorkboardProps {
   users: { id: number; name: string }[];
   refreshKey?: number;
   userIsAdmin?: boolean;
+  canApproveIntake?: boolean;
   onBack: () => void;
   onOpenTask: (job: JobRequestResponse) => void;
   onError: (message: string) => void;
@@ -41,6 +42,7 @@ export function PackageWorkboard({
   users,
   refreshKey = 0,
   userIsAdmin = false,
+  canApproveIntake = false,
   onBack,
   onOpenTask,
   onError,
@@ -170,7 +172,7 @@ export function PackageWorkboard({
         </td>
         <td className="px-4 py-2 text-xs text-muted-foreground">
           {job.taskPhase || handoffLabel(job.internalHandoffStatus)}
-          {userIsAdmin && job.awaitingIntakeApproval && (
+          {canApproveIntake && job.awaitingIntakeApproval && (
             <button
               type="button"
               className="ml-2 text-primary hover:underline block mt-1"

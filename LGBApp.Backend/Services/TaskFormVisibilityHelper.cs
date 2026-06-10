@@ -46,7 +46,7 @@ public static class TaskFormVisibilityHelper
         {
             if (!AuthHelper.CanAccessJob(user, job))
                 return false;
-            return IsMoaPhase(job.InternalHandoffStatus);
+            return IsMoaPhaseForClient(job.InternalHandoffStatus);
         }
 
         if (AuthHelper.IsAdmin(user))
@@ -98,4 +98,9 @@ public static class TaskFormVisibilityHelper
             or JobHandoffStatuses.MoaCirculation
             or JobHandoffStatuses.Completed
             or JobHandoffStatuses.AdminReview;
+
+    private static bool IsMoaPhaseForClient(string handoff) =>
+        handoff is JobHandoffStatuses.ReadyForMoa
+            or JobHandoffStatuses.MoaCirculation
+            or JobHandoffStatuses.Completed;
 }

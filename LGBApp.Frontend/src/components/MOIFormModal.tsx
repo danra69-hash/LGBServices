@@ -114,10 +114,11 @@ export function MOIFormModal({
 
   useEffect(() => {
     if (!isOpen || !formData.company) return;
-    resolveFormTemplate('MOI', formData.company, formData.formTemplateCode || undefined)
+    const service = String((formData as { service?: string }).service ?? formData.typeOfDocument ?? '');
+    resolveFormTemplate('MOI', formData.company, formData.formTemplateCode || undefined, service || undefined)
       .then(setFormTemplate)
       .catch(() => setFormTemplate(null));
-  }, [isOpen, formData.company, formData.formTemplateCode]);
+  }, [isOpen, formData.company, formData.formTemplateCode, formData.typeOfDocument]);
 
   // Reset or populate when modal opens
   useEffect(() => {

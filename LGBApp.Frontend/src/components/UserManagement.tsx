@@ -28,6 +28,7 @@ interface EditFormState {
   role: string;
   jobTitle: string;
   canRecommendMoi: boolean;
+  canApproveMoiIntake: boolean;
   customerId?: number;
 }
 
@@ -51,6 +52,7 @@ export function UserManagement({
     role: ROLES.User,
     jobTitle: '',
     canRecommendMoi: false,
+    canApproveMoiIntake: false,
     customerId: undefined,
   });
   const [saving, setSaving] = useState(false);
@@ -91,6 +93,7 @@ export function UserManagement({
       role: user.role,
       jobTitle: user.jobTitle ?? '',
       canRecommendMoi: Boolean(user.canRecommendMoi),
+      canApproveMoiIntake: Boolean(user.canApproveMoiIntake),
       customerId: user.customerId,
     });
   };
@@ -113,6 +116,7 @@ export function UserManagement({
         role: isClientTeamMode ? ROLES.ClientAdmin : editForm.role,
         jobTitle: isExternalRole || isClientTeamMode ? undefined : editForm.jobTitle || undefined,
         canRecommendMoi: isExternalRole || isClientTeamMode ? undefined : editForm.canRecommendMoi,
+        canApproveMoiIntake: isExternalRole || isClientTeamMode ? undefined : editForm.canApproveMoiIntake,
         customerId: isExternalRole || isClientTeamMode ? editForm.customerId : undefined,
       });
       setEditingUser(null);
@@ -319,6 +323,14 @@ export function UserManagement({
                       onChange={(e) => setEditForm({ ...editForm, canRecommendMoi: e.target.checked })}
                     />
                     Can recommend MOI
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={editForm.canApproveMoiIntake}
+                      onChange={(e) => setEditForm({ ...editForm, canApproveMoiIntake: e.target.checked })}
+                    />
+                    Can approve MOI intake
                   </label>
                 </>
               )}

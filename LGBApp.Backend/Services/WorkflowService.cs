@@ -37,6 +37,34 @@ public static class WorkflowService
         return "MOI_DEFAULT";
     }
 
+    public static async Task<string> ResolveMoiTemplateCodeAsync(
+        AppDbContext context,
+        Customer? customer,
+        DivisionGroup? divisionGroup,
+        string? serviceName)
+    {
+        if (!string.IsNullOrWhiteSpace(serviceName))
+        {
+            var normalized = serviceName.Trim();
+            var candidates = await context.FormTemplates
+                .Where(t => t.IsActive
+                    && t.FormType == "MOI"
+                    && t.PackageServiceName != null
+                    && t.PackageServiceName != "")
+                .ToListAsync();
+
+            var match = candidates.FirstOrDefault(t =>
+                string.Equals(t.PackageServiceName, normalized, StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains(t.PackageServiceName, StringComparison.OrdinalIgnoreCase)
+                || t.PackageServiceName.Contains(normalized, StringComparison.OrdinalIgnoreCase));
+
+            if (match != null)
+                return match.Code;
+        }
+
+        return ResolveMoiTemplateCode(customer, divisionGroup);
+    }
+
     public static async Task<string> ResolveMoaWorkflowTemplateCodeAsync(AppDbContext context, Customer? customer)
     {
         if (customer == null || string.IsNullOrWhiteSpace(customer.DivisionGroupCode))
