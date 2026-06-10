@@ -106,6 +106,7 @@ public class UsersController : ControllerBase
             CustomerId = customerId,
             InvitedByUserId = inviterId,
             IsVerified = AuthHelper.IsClientAdmin(User),
+            MustChangePassword = true,
             CreatedAt = DateTime.UtcNow,
         };
 

@@ -36,6 +36,7 @@ public static class CustomerClientAdminProvisioner
             Role = UserRoles.ClientAdmin,
             CustomerId = customer.CustomerId,
             IsVerified = true,
+            MustChangePassword = true,
             CreatedAt = DateTime.UtcNow,
         };
 

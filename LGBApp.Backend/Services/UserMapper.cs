@@ -17,6 +17,7 @@ public static class UserMapper
         CustomerId = user.CustomerId,
         CustomerName = user.Customer?.Company,
         IsVerified = user.IsVerified,
+        MustChangePassword = user.MustChangePassword,
         CreatedAt = user.CreatedAt
     };
 }

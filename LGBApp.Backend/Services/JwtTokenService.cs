@@ -31,6 +31,8 @@ public class JwtTokenService
         };
         if (user.CustomerId.HasValue)
             claims.Add(new Claim("customer_id", user.CustomerId.Value.ToString()));
+        if (user.MustChangePassword)
+            claims.Add(new Claim("must_change_password", "true"));
 
         var token = new JwtSecurityToken(
             issuer: _configuration["Jwt:Issuer"],

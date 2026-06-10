@@ -1,5 +1,6 @@
 using System.Text;
 using LGBApp.Backend.Data;
+using LGBApp.Backend.Middleware;
 using LGBApp.Backend.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -112,6 +113,7 @@ app.UseCors("AllowFigmaFrontend");
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<MustChangePasswordMiddleware>();
 app.MapControllers();
 
 app.Run();

@@ -1,7 +1,9 @@
+using System.Security.Claims;
 using LGBApp.Backend.Data;
 using LGBApp.Backend.Models;
 using LGBApp.Backend.Models.DTOs;
 using LGBApp.Backend.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -34,6 +36,7 @@ public class AuthController : ControllerBase
             Mobile = request.Mobile,
             Role = "User",
             IsVerified = false,
+            MustChangePassword = false,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -58,6 +61,43 @@ public class AuthController : ControllerBase
         {
             Token = _tokenService.GenerateToken(user),
             User = UserMapper.ToResponse(user)
+        });
+    }
+
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<ActionResult<AuthResponse>> ChangePassword(ChangePasswordRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
+            return BadRequest("New password must be at least 6 characters.");
+
+        if (request.NewPassword != request.ConfirmPassword)
+            return BadRequest("New password and confirmation do not match.");
+
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!int.TryParse(userIdClaim, out var userId))
+            return Unauthorized();
+
+        var user = await _context.Users
+            .Include(u => u.Customer)
+            .FirstOrDefaultAsync(u => u.UserId == userId);
+        if (user == null)
+            return NotFound();
+
+        if (!PasswordHasher.Verify(request.CurrentPassword, user.PasswordHash))
+            return BadRequest("Current password is incorrect.");
+
+        if (PasswordHasher.Verify(request.NewPassword, user.PasswordHash))
+            return BadRequest("New password must be different from the current password.");
+
+        user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
+        user.MustChangePassword = false;
+        await _context.SaveChangesAsync();
+
+        return Ok(new AuthResponse
+        {
+            Token = _tokenService.GenerateToken(user),
+            User = UserMapper.ToResponse(user),
         });
     }
 }

@@ -11,6 +11,7 @@ export interface UserResponse {
   customerId?: number;
   customerName?: string;
   isVerified: boolean;
+  mustChangePassword: boolean;
   createdAt: string;
 }
 
@@ -461,6 +462,17 @@ export async function register(
   return request<AuthResponse>('/api/auth/register', {
     method: 'POST',
     body: JSON.stringify({ email, password, name, mobile }),
+  });
+}
+
+export async function changePassword(data: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}): Promise<AuthResponse> {
+  return request<AuthResponse>('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 }
 

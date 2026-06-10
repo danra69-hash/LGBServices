@@ -12,5 +12,6 @@ public class UserResponse
     public int? CustomerId { get; set; }
     public string? CustomerName { get; set; }
     public bool IsVerified { get; set; }
+    public bool MustChangePassword { get; set; }
     public DateTime CreatedAt { get; set; }
 }

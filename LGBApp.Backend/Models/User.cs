@@ -19,6 +19,8 @@
         public Customer? Customer { get; set; }
 
         public bool IsVerified { get; set; } = false;
+        /// <summary>When true, user must set a new password before using the app.</summary>
+        public bool MustChangePassword { get; set; } = true;
         /// <summary>User id of the admin who invited this account (invitation-to-config).</summary>
         public int? InvitedByUserId { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

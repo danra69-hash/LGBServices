@@ -96,6 +96,7 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "Users", "CanRecommendMoi", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(context, "Users", "CustomerId", "INTEGER NULL");
         EnsureColumn(context, "Users", "InvitedByUserId", "INTEGER NULL");
+        EnsureColumn(context, "Users", "MustChangePassword", "INTEGER NOT NULL DEFAULT 1");
 
         context.Database.ExecuteSqlRaw("""
             CREATE TABLE IF NOT EXISTS "ServiceJobForms" (

@@ -21,6 +21,7 @@ import { CreateFormModal } from './components/CreateFormModal';
 import { MOIFormModal } from './components/MOIFormModal';
 import { MOAFormModal } from './components/MOAFormModal';
 import { Login } from './components/Login';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { PackageTracking } from './components/PackageTracking';
 import { PackageWorkboard } from './components/PackageWorkboard';
 import { MyWorkTracker } from './components/MyWorkTracker';
@@ -897,6 +898,17 @@ export default function App() {
             setCurrentUser(getAuthUser());
             setActiveTab('dashboard');
           }}
+        />
+      </div>
+    );
+  }
+
+  if (currentUser.mustChangePassword) {
+    return (
+      <div className="size-full bg-background">
+        <ChangePasswordModal
+          userName={currentUser.name}
+          onSuccess={() => setCurrentUser(getAuthUser())}
         />
       </div>
     );

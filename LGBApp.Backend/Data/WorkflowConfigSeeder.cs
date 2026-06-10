@@ -43,6 +43,7 @@ public static class WorkflowConfigSeeder
                 Role = UserRoles.Client,
                 CustomerId = firstCustomer.CustomerId,
                 IsVerified = true,
+                MustChangePassword = true,
                 CreatedAt = DateTime.UtcNow,
             });
         }
