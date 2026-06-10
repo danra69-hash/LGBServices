@@ -36,3 +36,9 @@ appsettings.*.local.json
 
 ## Local tooling
 .tools/
+
+## Frontend (Node)
+LGBApp.Frontend/node_modules/
+LGBApp.Frontend/dist/
+LGBApp.Frontend/.env
+LGBApp.Frontend/.env.local

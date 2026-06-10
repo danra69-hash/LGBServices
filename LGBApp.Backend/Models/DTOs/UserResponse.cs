@@ -7,6 +7,10 @@ public class UserResponse
     public string Name { get; set; } = string.Empty;
     public string Mobile { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
+    public string JobTitle { get; set; } = string.Empty;
+    public bool CanRecommendMoi { get; set; }
+    public int? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
     public bool IsVerified { get; set; }
     public DateTime CreatedAt { get; set; }
 }

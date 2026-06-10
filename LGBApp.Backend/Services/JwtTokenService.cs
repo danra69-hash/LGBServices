@@ -22,18 +22,20 @@ public class JwtTokenService
 
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
-            new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-            new Claim(ClaimTypes.Email, user.Email),
-            new Claim(ClaimTypes.Name, user.Name),
-            new Claim(ClaimTypes.Role, user.Role)
+            new(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+            new(ClaimTypes.Email, user.Email),
+            new(ClaimTypes.Name, user.Name),
+            new(ClaimTypes.Role, user.Role),
         };
+        if (user.CustomerId.HasValue)
+            claims.Add(new Claim("customer_id", user.CustomerId.Value.ToString()));
 
         var token = new JwtSecurityToken(
             issuer: _configuration["Jwt:Issuer"],
             audience: _configuration["Jwt:Audience"],
-            claims: claims,
+            claims: claims.ToArray(),
             expires: DateTime.UtcNow.AddDays(7),
             signingCredentials: credentials);
 

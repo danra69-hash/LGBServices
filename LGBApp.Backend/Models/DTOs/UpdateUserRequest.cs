@@ -13,4 +13,7 @@ public class UpdateUserRequest
     public string Mobile { get; set; } = string.Empty;
 
     public string Role { get; set; } = "User";
+    public string JobTitle { get; set; } = string.Empty;
+    public bool CanRecommendMoi { get; set; }
+    public int? CustomerId { get; set; }
 }

@@ -12,8 +12,15 @@
         public string Name { get; set; } = string.Empty;
         public string Mobile { get; set; } = string.Empty;
         public string Role { get; set; } = "User";
+        public string JobTitle { get; set; } = string.Empty;
+        public bool CanRecommendMoi { get; set; }
+        /// <summary>Set for ClientAdmin and Client — scopes access to one customer company.</summary>
+        public int? CustomerId { get; set; }
+        public Customer? Customer { get; set; }
 
         public bool IsVerified { get; set; } = false;
+        /// <summary>User id of the admin who invited this account (invitation-to-config).</summary>
+        public int? InvitedByUserId { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }

@@ -18,11 +18,19 @@ builder.Services.AddCors(options =>
     });
 });
 
+var dbProvider = builder.Configuration["Database:Provider"] ?? "SqlServer";
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+{
+    if (string.Equals(dbProvider, "Sqlite", StringComparison.OrdinalIgnoreCase))
+        options.UseSqlite(connectionString);
+    else
+        options.UseSqlServer(connectionString);
+});
 
 builder.Services.AddScoped<JwtTokenService>();
-
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Jwt:Key is not configured.");
 
@@ -42,7 +50,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -72,7 +84,22 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    context.Database.Migrate();
+    if (string.Equals(dbProvider, "Sqlite", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Database.EnsureCreated();
+        DevDataSeeder.SeedIfEmpty(context);
+        SqliteSchemaMigrator.Apply(context);
+        WorkflowConfigSeeder.Seed(context);
+        CustomerClientAdminProvisioner.EnsureAllCustomersHaveClientAdminAsync(context).GetAwaiter().GetResult();
+        FigmaProductCatalog.SyncCatalog(context);
+        JobRequestSyncService.LinkOrphanJobs(context);
+        context.SaveChanges();
+        JobRequestSyncService.SyncAllCustomersAsync(context).GetAwaiter().GetResult();
+        var allJobs = context.JobRequests.ToList();
+        JobFormProvisioner.EnsureFormsForJobsAsync(context, allJobs).GetAwaiter().GetResult();
+    }
+    else
+        context.Database.Migrate();
 }
 
 if (app.Environment.IsDevelopment())
