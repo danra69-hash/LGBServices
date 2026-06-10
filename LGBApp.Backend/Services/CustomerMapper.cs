@@ -34,6 +34,8 @@ public static class CustomerMapper
             LastContact = customer.LastContact.ToString("yyyy-MM-dd"),
             InvoiceBy = customer.InvoiceBy,
             ChargeTo = customer.ChargeTo,
+            InvoiceByPartyIds = BillingPartyService.ParsePartyIds(customer.InvoiceByPartyIdsJson),
+            ChargeToPartyIds = BillingPartyService.ParsePartyIds(customer.ChargeToPartyIdsJson),
             Package = primaryDto?.PackageName ?? customer.Package,
             PackageValue = primaryDto?.PackageValue ?? customer.PackageValue,
             Cosec = customer.Cosec,
@@ -139,6 +141,8 @@ public static class CustomerMapper
         customer.Status = request.Status;
         customer.InvoiceBy = request.InvoiceBy;
         customer.ChargeTo = request.ChargeTo;
+        customer.InvoiceByPartyIdsJson = JsonHelper.Serialize(request.InvoiceByPartyIds);
+        customer.ChargeToPartyIdsJson = JsonHelper.Serialize(request.ChargeToPartyIds);
         customer.Cosec = request.Cosec;
         customer.DivisionGroupCode = request.DivisionGroupCode ?? string.Empty;
         customer.HasLoa = request.HasLoa;

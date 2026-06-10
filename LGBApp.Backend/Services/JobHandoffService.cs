@@ -27,10 +27,25 @@ public static class JobHandoffService
         job.InternalHandoffStatus = status;
     }
 
+    public static async Task OnMoiIntakeApprovedAsync(AppDbContext context, JobRequest job)
+    {
+        SetHandoff(job, JobHandoffStatuses.PendingPrep);
+        job.Status = "In Progress";
+
+        var moiForm = await context.MOIForms.FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId);
+        if (moiForm != null)
+        {
+            moiForm.WorkflowState = "PendingPrep";
+            moiForm.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await context.SaveChangesAsync();
+    }
+
     public static async Task OnClientMoiIssuedAsync(AppDbContext context, JobRequest job, MOIForm moiForm)
     {
         SetHandoff(job, JobHandoffStatuses.ClientSubmitted);
-        moiForm.WorkflowState = "PendingPrep";
+        moiForm.WorkflowState = "PendingAdminIntake";
         job.Status = "Pending";
         await context.SaveChangesAsync();
     }

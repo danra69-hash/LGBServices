@@ -12,6 +12,7 @@ import { CreateCustomerModal } from './components/CreateCustomerModal';
 import { CreateProductModal } from './components/CreateProductModal';
 import { UserManagement } from './components/UserManagement';
 import { AdminWorkflowConfig } from './components/AdminWorkflowConfig';
+import { BillingPartiesAdmin } from './components/BillingPartiesAdmin';
 import { AdminFormTemplates } from './components/AdminFormTemplates';
 import { AdminPackageOverview } from './components/AdminPackageOverview';
 import { ClientPortal } from './components/ClientPortal';
@@ -303,6 +304,8 @@ export default function App() {
         lastContact: existing?.lastContact ?? dateCreated,
         invoiceBy: String(data.invoiceBy ?? ''),
         chargeTo: String(data.chargeTo ?? ''),
+        invoiceByPartyIds: (data.invoiceByPartyIds as number[] | undefined) ?? [],
+        chargeToPartyIds: (data.chargeToPartyIds as number[] | undefined) ?? [],
         package: primary?.packageName ?? '',
         packageValue: primary?.packageValue ?? 0,
         cosec: Boolean(data.cosec),
@@ -338,6 +341,8 @@ export default function App() {
         mobile: data.mobile,
         invoiceBy: data.invoiceBy,
         chargeTo: data.chargeTo,
+        invoiceByPartyIds: data.invoiceByPartyIds as number[] | undefined,
+        chargeToPartyIds: data.chargeToPartyIds as number[] | undefined,
         cosec: data.cosec ?? false,
         divisionGroupCode: data.divisionGroupCode,
         hasLoa: data.hasLoa ?? false,
@@ -1117,6 +1122,7 @@ export default function App() {
               refreshKey={userRefreshKey}
               onCreateUser={() => setIsCreateUserModalOpen(true)}
             />
+            <BillingPartiesAdmin />
             <AdminWorkflowConfig refreshKey={refreshKey} />
             <AdminFormTemplates refreshKey={refreshKey} />
             <FormsManagement onViewMOI={openMOICreate} onViewMOA={openMOACreate} />

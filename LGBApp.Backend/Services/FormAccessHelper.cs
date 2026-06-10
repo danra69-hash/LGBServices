@@ -22,7 +22,7 @@ public static class FormAccessHelper
             : null;
 
         if (job != null)
-            return AuthHelper.CanAccessJob(user, job);
+            return TaskFormVisibilityHelper.CanViewMoiForm(user, job);
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(context, form.Company);
         return AuthHelper.CanAccessCustomer(user, customer?.CustomerId);
@@ -42,7 +42,7 @@ public static class FormAccessHelper
                 .Include(j => j.Units).ThenInclude(u => u.Assignees)
                 .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId);
             if (job != null)
-                return AuthHelper.CanAccessJob(user, job);
+                return TaskFormVisibilityHelper.CanViewMoaForm(user, job);
         }
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(context, form.Company);

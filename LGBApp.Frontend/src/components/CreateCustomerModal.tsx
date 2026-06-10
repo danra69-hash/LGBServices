@@ -1,6 +1,13 @@
 import { X, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { getDivisionGroups, type CustomerResponse, type DivisionGroupDto, type ProductResponse } from '@/lib/api';
+import {
+  getBillingParties,
+  getDivisionGroups,
+  type BillingPartyDto,
+  type CustomerResponse,
+  type DivisionGroupDto,
+  type ProductResponse,
+} from '@/lib/api';
 import {
   ADD_ON_CATALOG,
   ADD_ON_UNIT_PRICE,
@@ -120,10 +127,18 @@ export function CreateCustomerModal({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [divisionGroups, setDivisionGroups] = useState<DivisionGroupDto[]>([]);
+  const [billingParties, setBillingParties] = useState<BillingPartyDto[]>([]);
+  const [invoiceByPartyIds, setInvoiceByPartyIds] = useState<number[]>([]);
+  const [chargeToPartyIds, setChargeToPartyIds] = useState<number[]>([]);
+
+  const toggleParty = (ids: number[], setIds: (v: number[]) => void, id: number) => {
+    setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
     void getDivisionGroups().then(setDivisionGroups).catch(() => setDivisionGroups([]));
+    void getBillingParties().then(setBillingParties).catch(() => setBillingParties([]));
 
     if (editMode && initialData) {
       setFormData({
@@ -141,6 +156,8 @@ export function CreateCustomerModal({
         chargeTo: initialData.chargeTo,
         status: initialData.status,
       });
+      setInvoiceByPartyIds(initialData.invoiceByPartyIds ?? []);
+      setChargeToPartyIds(initialData.chargeToPartyIds ?? []);
       const pkgList =
         initialData.packages?.length > 0
           ? initialData.packages.map((p) => {
@@ -289,16 +306,24 @@ export function CreateCustomerModal({
     setFormData(emptyForm);
     setPackages([defaultPackage()]);
     setAccountHolders([{ id: 1, name: '', email: '', phone: '', moi: false, moiApproval: false, moa: false }]);
+    setInvoiceByPartyIds([]);
+    setChargeToPartyIds([]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (invoiceByPartyIds.length === 0 || chargeToPartyIds.length === 0) {
+      setSubmitError('Select at least one Invoice By and one Charge To entry.');
+      return;
+    }
     setSubmitting(true);
     setSubmitError('');
     const dateCreated = new Date().toISOString().split('T')[0];
     try {
       await onSubmit({
         ...formData,
+        invoiceByPartyIds,
+        chargeToPartyIds,
         packages,
         accountHolders,
         dateCreated,
@@ -445,23 +470,49 @@ export function CreateCustomerModal({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block mb-2">Invoice By *</label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.invoiceBy}
-                      onChange={(e) => setFormData({ ...formData, invoiceBy: e.target.value })}
-                      className="w-full px-3 py-2 border border-border rounded-lg bg-input-background"
-                    />
+                    {billingParties.length === 0 ? (
+                      <p className="text-xs text-muted-foreground border border-border rounded-lg p-3">
+                        Add billing entities under Admin → Invoice By / Charge To directory first.
+                      </p>
+                    ) : (
+                      <div className="border border-border rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
+                        {billingParties
+                          .filter((b) => b.category === 'InvoiceBy' || b.category === 'Both')
+                          .map((b) => (
+                            <label key={`inv-${b.id}`} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={invoiceByPartyIds.includes(b.id)}
+                                onChange={() => toggleParty(invoiceByPartyIds, setInvoiceByPartyIds, b.id)}
+                              />
+                              {b.name}
+                            </label>
+                          ))}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block mb-2">Charge To *</label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.chargeTo}
-                      onChange={(e) => setFormData({ ...formData, chargeTo: e.target.value })}
-                      className="w-full px-3 py-2 border border-border rounded-lg bg-input-background"
-                    />
+                    {billingParties.length === 0 ? (
+                      <p className="text-xs text-muted-foreground border border-border rounded-lg p-3">
+                        Add billing entities under Admin → Invoice By / Charge To directory first.
+                      </p>
+                    ) : (
+                      <div className="border border-border rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
+                        {billingParties
+                          .filter((b) => b.category === 'ChargeTo' || b.category === 'Both')
+                          .map((b) => (
+                            <label key={`chg-${b.id}`} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={chargeToPartyIds.includes(b.id)}
+                                onChange={() => toggleParty(chargeToPartyIds, setChargeToPartyIds, b.id)}
+                              />
+                              {b.name}
+                            </label>
+                          ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 

@@ -24,4 +24,6 @@ public class JobRequestResponse
     public List<JobRequestUnitDto> Units { get; set; } = [];
     public string? LinkedFormKind { get; set; }
     public int? LinkedFormId { get; set; }
+    public bool AwaitingIntakeApproval { get; set; }
+    public string? TaskPhase { get; set; }
 }

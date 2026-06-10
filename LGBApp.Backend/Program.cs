@@ -91,6 +91,8 @@ using (var scope = app.Services.CreateScope())
         DevDataSeeder.SeedIfEmpty(context);
         SqliteSchemaMigrator.Apply(context);
         WorkflowConfigSeeder.Seed(context);
+        InternalStaffSeeder.Seed(context);
+        BillingPartyService.SeedFromLegacyCustomerFieldsAsync(context).GetAwaiter().GetResult();
         CustomerClientAdminProvisioner.EnsureAllCustomersHaveClientAdminAsync(context).GetAwaiter().GetResult();
         FigmaProductCatalog.SyncCatalog(context);
         JobRequestSyncService.LinkOrphanJobs(context);

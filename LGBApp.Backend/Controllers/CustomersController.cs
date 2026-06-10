@@ -59,6 +59,12 @@ public class CustomersController : ControllerBase
     public async Task<ActionResult<CustomerResponse>> CreateCustomer(CreateCustomerRequest request)
     {
         var customer = CustomerMapper.FromCreateRequest(request);
+        await BillingPartyService.ApplyPartySelectionsAsync(
+            _context, customer, request.InvoiceByPartyIds, request.ChargeToPartyIds);
+        if (string.IsNullOrWhiteSpace(customer.InvoiceBy) && !string.IsNullOrWhiteSpace(request.InvoiceBy))
+            customer.InvoiceBy = request.InvoiceBy;
+        if (string.IsNullOrWhiteSpace(customer.ChargeTo) && !string.IsNullOrWhiteSpace(request.ChargeTo))
+            customer.ChargeTo = request.ChargeTo;
         _context.Customers.Add(customer);
         await _context.SaveChangesAsync();
 
@@ -85,6 +91,8 @@ public class CustomersController : ControllerBase
             return NotFound();
 
         CustomerMapper.ApplyUpdate(customer, request);
+        await BillingPartyService.ApplyPartySelectionsAsync(
+            _context, customer, request.InvoiceByPartyIds, request.ChargeToPartyIds);
 
         _context.AccountHolders.RemoveRange(customer.AccountHolders);
         customer.AccountHolders = request.AccountHolders.Select(h => new Models.AccountHolder

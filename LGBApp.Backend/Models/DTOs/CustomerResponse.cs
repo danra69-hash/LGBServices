@@ -12,6 +12,8 @@ public class CustomerResponse
     public string LastContact { get; set; } = string.Empty;
     public string InvoiceBy { get; set; } = string.Empty;
     public string ChargeTo { get; set; } = string.Empty;
+    public List<int> InvoiceByPartyIds { get; set; } = [];
+    public List<int> ChargeToPartyIds { get; set; } = [];
     public string Package { get; set; } = string.Empty;
     public decimal PackageValue { get; set; }
     public bool Cosec { get; set; }

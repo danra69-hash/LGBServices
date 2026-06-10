@@ -79,6 +79,8 @@ export interface CustomerResponse {
   lastContact: string;
   invoiceBy: string;
   chargeTo: string;
+  invoiceByPartyIds?: number[];
+  chargeToPartyIds?: number[];
   package: string;
   packageValue: number;
   cosec: boolean;
@@ -163,6 +165,16 @@ export interface JobRequestResponse {
   linkedFormKind?: string;
   linkedFormId?: number;
   internalHandoffStatus?: string;
+  awaitingIntakeApproval?: boolean;
+  taskPhase?: string;
+}
+
+export interface BillingPartyDto {
+  id: number;
+  name: string;
+  category: string;
+  isActive: boolean;
+  sortOrder: number;
 }
 
 export interface MoaPackChecklistDto {
@@ -843,6 +855,37 @@ export async function updateMoaPack(id: number, data: {
 
 export async function startMoaWorkflow(id: number): Promise<FormResponse> {
   return request<FormResponse>(`/api/moaforms/${id}/start-workflow`, { method: 'POST' });
+}
+
+export async function getBillingParties(activeOnly = true, category?: string): Promise<BillingPartyDto[]> {
+  const params = new URLSearchParams();
+  if (!activeOnly) params.set('activeOnly', 'false');
+  if (category) params.set('category', category);
+  const qs = params.toString();
+  return request<BillingPartyDto[]>(`/api/billingparties${qs ? `?${qs}` : ''}`);
+}
+
+export async function createBillingParty(data: {
+  name: string;
+  category?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}): Promise<BillingPartyDto> {
+  return request<BillingPartyDto>('/api/billingparties', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteBillingParty(id: number): Promise<void> {
+  return request<void>(`/api/billingparties/${id}`, { method: 'DELETE' });
+}
+
+export async function approveMoiIntake(jobId: number): Promise<JobRequestResponse> {
+  return request<JobRequestResponse>(`/api/jobrequests/${jobId}/approve-intake`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
 }
 
 export async function advanceJobHandoff(

@@ -69,13 +69,14 @@ public class JobRequestsController : ControllerBase
                 return Ok(Array.Empty<JobRequestResponse>());
 
             jobs = jobs
+                .Where(j => !TaskFormVisibilityHelper.AwaitingIntakeApproval(j))
                 .Where(j => j.Units.Any(u => JobRequestUnitService.IsUserAssigned(u, userId.Value))
                     || j.AssignedUserId == userId.Value)
                 .ToList();
         }
 
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses, User);
         return responses;
     }
 
@@ -91,6 +92,7 @@ public class JobRequestsController : ControllerBase
             .ThenInclude(a => a.User)
             .Include(u => u.JobRequest)
             .Where(u => u.Status != "Completed"
+                && u.JobRequest.InternalHandoffStatus != JobHandoffStatuses.ClientSubmitted
                 && (u.AssignedUserId == userId.Value
                     || u.Assignees.Any(a => a.UserId == userId.Value)))
             .OrderBy(u => u.ScheduledDate ?? DateTime.MaxValue)
@@ -128,8 +130,27 @@ public class JobRequestsController : ControllerBase
 
         job = await JobQuery().FirstAsync(j => j.JobRequestId == job.JobRequestId);
         var created = JobRequestMapper.ToResponse(job);
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [created]);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [created], User);
         return CreatedAtAction(nameof(GetJobRequest), new { id = job.JobRequestId }, created);
+    }
+
+    [HttpPost("{id}/approve-intake")]
+    public async Task<ActionResult<JobRequestResponse>> ApproveMoiIntake(int id)
+    {
+        if (!AuthHelper.CanApproveMoiIntake(User))
+            return Forbid();
+
+        var job = await JobQuery().FirstOrDefaultAsync(j => j.JobRequestId == id);
+        if (job == null) return NotFound();
+
+        if (!TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
+            return BadRequest(new { message = "This task is not awaiting MOI intake approval." });
+
+        await JobHandoffService.OnMoiIntakeApprovedAsync(_context, job);
+        job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
+        var response = JobRequestMapper.ToResponse(job);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
+        return Ok(response);
     }
 
     [HttpPost("{id}/assign")]
@@ -214,7 +235,7 @@ public class JobRequestsController : ControllerBase
         await _context.SaveChangesAsync();
         job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
         var response = JobRequestMapper.ToResponse(job);
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response]);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
         return Ok(response);
     }
 

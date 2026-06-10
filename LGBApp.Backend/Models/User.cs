@@ -14,6 +14,8 @@
         public string Role { get; set; } = "User";
         public string JobTitle { get; set; } = string.Empty;
         public bool CanRecommendMoi { get; set; }
+        /// <summary>Admin intake: approve client-submitted MOI before internal staff can see/assign.</summary>
+        public bool CanApproveMoiIntake { get; set; }
         /// <summary>Set for ClientAdmin and Client — scopes access to one customer company.</summary>
         public int? CustomerId { get; set; }
         public Customer? Customer { get; set; }

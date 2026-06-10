@@ -44,7 +44,7 @@ public class ClientJobsController : ControllerBase
             .ToListAsync();
 
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses, User);
         return responses;
     }
 
@@ -121,7 +121,7 @@ public class ClientJobsController : ControllerBase
             .FirstAsync(j => j.JobRequestId == job.JobRequestId);
 
         var response = JobRequestMapper.ToResponse(job);
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response]);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
         return CreatedAtAction(nameof(GetMyCompanyJobs), response);
     }
 
@@ -178,7 +178,7 @@ public class ClientJobsController : ControllerBase
             .FirstAsync(j => j.JobRequestId == jobId);
 
         var response = JobRequestMapper.ToResponse(job);
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response]);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
         return Ok(response);
     }
 
@@ -265,7 +265,7 @@ public class ClientJobsController : ControllerBase
             .FirstAsync(j => j.JobRequestId == jobId);
 
         var response = JobRequestMapper.ToResponse(job);
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response]);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
         return Ok(response);
     }
 }

@@ -97,9 +97,24 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "Users", "CustomerId", "INTEGER NULL");
         EnsureColumn(context, "Users", "InvitedByUserId", "INTEGER NULL");
         EnsureColumn(context, "Users", "MustChangePassword", "INTEGER NOT NULL DEFAULT 1");
+        EnsureColumn(context, "Users", "CanApproveMoiIntake", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(context, "Customers", "InvoiceByPartyIdsJson", "TEXT NOT NULL DEFAULT '[]'");
+        EnsureColumn(context, "Customers", "ChargeToPartyIdsJson", "TEXT NOT NULL DEFAULT '[]'");
 
         context.Database.ExecuteSqlRaw("""
             UPDATE "Users" SET "Role" = 'ClientAdmin' WHERE "Role" = 'Client';
+            UPDATE "Users" SET "CanApproveMoiIntake" = 1 WHERE "Role" = 'Admin';
+            """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "BillingParties" (
+                "BillingPartyId" INTEGER NOT NULL CONSTRAINT "PK_BillingParties" PRIMARY KEY AUTOINCREMENT,
+                "Name" TEXT NOT NULL,
+                "Category" TEXT NOT NULL DEFAULT 'Both',
+                "IsActive" INTEGER NOT NULL DEFAULT 1,
+                "SortOrder" INTEGER NOT NULL DEFAULT 0,
+                "CreatedAt" TEXT NOT NULL
+            );
             """);
 
         context.Database.ExecuteSqlRaw("""

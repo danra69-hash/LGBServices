@@ -12,6 +12,10 @@ public class Customer
     public DateTime LastContact { get; set; }
     public string InvoiceBy { get; set; } = string.Empty;
     public string ChargeTo { get; set; } = string.Empty;
+    /// <summary>JSON array of BillingPartyId integers for multi-select Invoice By.</summary>
+    public string InvoiceByPartyIdsJson { get; set; } = "[]";
+    /// <summary>JSON array of BillingPartyId integers for multi-select Charge To.</summary>
+    public string ChargeToPartyIdsJson { get; set; } = "[]";
     public string Package { get; set; } = string.Empty;
     public decimal PackageValue { get; set; }
     public bool Cosec { get; set; }

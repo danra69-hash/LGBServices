@@ -92,8 +92,14 @@ public class MOIFormsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.FormTemplateCode))
             form.FormTemplateCode = request.FormTemplateCode;
 
-        if (form.WorkflowState == "PendingPrep" && AuthHelper.IsInternalStaff(User))
-            form.WorkflowState = "PendingRecommendation";
+        if (form.WorkflowState == "PendingPrep"
+            && AuthHelper.IsInternalStaff(User)
+            && form.JobRequestId.HasValue)
+        {
+            var linkedJob = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
+            if (linkedJob != null && !TaskFormVisibilityHelper.AwaitingIntakeApproval(linkedJob))
+                form.WorkflowState = "PendingRecommendation";
+        }
 
         form.UpdatedAt = DateTime.UtcNow;
 
@@ -141,6 +147,9 @@ public class MOIFormsController : ControllerBase
     [HttpPost("{id}/approve")]
     public async Task<ActionResult<FormResponse>> ApproveMoi(int id, ApproveWorkflowStepRequest request)
     {
+        if (!AuthHelper.CanApproveMoiIntake(User))
+            return Forbid();
+
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 

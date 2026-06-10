@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
     public DbSet<WorkflowInstance> WorkflowInstances { get; set; }
     public DbSet<WorkflowStepInstance> WorkflowStepInstances { get; set; }
     public DbSet<ServiceJobForm> ServiceJobForms { get; set; }
+    public DbSet<BillingParty> BillingParties { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(entity =>
@@ -40,6 +41,7 @@ public class AppDbContext : DbContext
             entity.Property(u => u.Role).HasMaxLength(50).HasDefaultValue("User");
             entity.Property(u => u.JobTitle).HasMaxLength(100);
             entity.Property(u => u.IsVerified).HasDefaultValue(false);
+            entity.Property(u => u.CanApproveMoiIntake).HasDefaultValue(false);
             entity.HasOne(u => u.Customer)
                 .WithMany()
                 .HasForeignKey(u => u.CustomerId)
@@ -57,6 +59,8 @@ public class AppDbContext : DbContext
             entity.Property(c => c.DivisionGroupCode).HasMaxLength(50);
             entity.Property(c => c.MoiFormTemplateCode).HasMaxLength(50);
             entity.Property(c => c.MoaFormTemplateCode).HasMaxLength(50);
+            entity.Property(c => c.InvoiceByPartyIdsJson).HasDefaultValue("[]");
+            entity.Property(c => c.ChargeToPartyIdsJson).HasDefaultValue("[]");
             entity.HasMany(c => c.AccountHolders)
                 .WithOne(h => h.Customer)
                 .HasForeignKey(h => h.CustomerId)

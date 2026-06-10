@@ -40,6 +40,12 @@ public static class AuthHelper
 
     public static bool CanManageSystem(ClaimsPrincipal user) => IsAdmin(user);
 
+    public static bool CanApproveMoiIntake(ClaimsPrincipal user) =>
+        IsAdmin(user) || string.Equals(
+            user.FindFirstValue("can_approve_moi_intake"),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
     public static bool CanAccessCustomer(ClaimsPrincipal user, int? customerId)
     {
         if (IsAdmin(user) || string.Equals(CurrentRole(user), UserRoles.User, StringComparison.OrdinalIgnoreCase))
@@ -85,6 +91,9 @@ public static class AuthHelper
 
             return true;
         }
+
+        if (!IsAdmin(user) && TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
+            return false;
 
         var internalUserId = CurrentUserId(user);
         if (!internalUserId.HasValue)

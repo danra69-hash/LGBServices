@@ -4,6 +4,7 @@ import { UserAssignCell } from './UserAssignCell';
 import {
   ApiError,
   advanceJobHandoff,
+  approveMoiIntake,
   assignJobRequest,
   getJobRequests,
   recordJobProgress,
@@ -102,7 +103,7 @@ export function PackageWorkboard({
 
   const renderUnitRow = (job: JobRequestResponse, unit: JobRequestUnitDto, label: string, isForm: boolean) => {
     const key = draftKey(job.id, unit.unitNumber);
-    const canOpen = isForm && (unit.status === 'In Progress' || unit.status === 'Pending');
+    const canOpen = isForm && Boolean(job.linkedFormId) && (unit.status === 'In Progress' || unit.status === 'Pending');
     const showUnitLabel = (job.totalQty ?? 1) > 1;
 
     return (
@@ -168,7 +169,20 @@ export function PackageWorkboard({
           </span>
         </td>
         <td className="px-4 py-2 text-xs text-muted-foreground">
-          {handoffLabel(job.internalHandoffStatus)}
+          {job.taskPhase || handoffLabel(job.internalHandoffStatus)}
+          {userIsAdmin && job.awaitingIntakeApproval && (
+            <button
+              type="button"
+              className="ml-2 text-primary hover:underline block mt-1"
+              onClick={() =>
+                void approveMoiIntake(job.id)
+                  .then(() => onSuccess())
+                  .catch((err) => onError(err instanceof ApiError ? err.message : 'Intake approval failed.'))
+              }
+            >
+              Approve MOI intake
+            </button>
+          )}
           {userIsAdmin && job.internalHandoffStatus === 'AdminReview' && (
             <button
               type="button"

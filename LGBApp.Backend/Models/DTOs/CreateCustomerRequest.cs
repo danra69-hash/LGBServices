@@ -13,6 +13,8 @@ public class CreateCustomerRequest
     public string? Validity { get; set; }
     public string? InvoiceBy { get; set; }
     public string? ChargeTo { get; set; }
+    public List<int>? InvoiceByPartyIds { get; set; }
+    public List<int>? ChargeToPartyIds { get; set; }
     public bool Cosec { get; set; }
     public string? DivisionGroupCode { get; set; }
     public bool HasLoa { get; set; }
