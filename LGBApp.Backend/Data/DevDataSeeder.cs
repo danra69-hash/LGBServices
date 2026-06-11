@@ -3,6 +3,9 @@ using LGBApp.Backend.Services;
 
 namespace LGBApp.Backend.Data;
 
+/// <summary>
+/// Seeds a demo customer on first run. Jobs and MOI/MOA forms are created by startup sync services.
+/// </summary>
 public static class DevDataSeeder
 {
     public static void SeedIfEmpty(AppDbContext context)
@@ -10,84 +13,65 @@ public static class DevDataSeeder
         if (context.Customers.Any())
             return;
 
+        var purchased = DateTime.UtcNow.Date.AddMonths(-1);
+        var expiry = purchased.AddYears(1);
+
         var customer = new Customer
         {
-            Name = "Sarah Johnson",
-            Email = "sarah.j@acme.com",
-            Phone = "(555) 123-4567",
+            Name = "Dan Ra",
+            Email = "dra@lgb.test",
+            Phone = "",
             Company = "Acme Corp",
             Status = "Active",
-            Value = 125000,
-            LastContact = DateTime.UtcNow.AddDays(-5),
+            Value = 6980,
+            LastContact = DateTime.UtcNow.AddDays(-3),
             InvoiceBy = "Acme Corp",
             ChargeTo = "Acme Corp",
-            Package = "Enterprise Package",
-            PackageValue = 5930,
+            Package = "Enterprise Plus",
+            PackageValue = 6980,
             Cosec = true,
-            MoiJson = JsonHelper.Serialize(new[] { "Sarah Johnson" }),
-            MoiApprovalJson = JsonHelper.Serialize(new[] { "Mike Davis" }),
-            MoaJson = JsonHelper.Serialize(new[] { "Sarah Johnson" }),
-            PurchasedDate = DateTime.UtcNow.AddMonths(-3),
-            ExpiryDate = DateTime.UtcNow.AddMonths(9),
+            MoiJson = JsonHelper.Serialize(new[] { "Dan Ra", "Daniel Ra" }),
+            MoiApprovalJson = JsonHelper.Serialize(new[] { "Daniel Ra" }),
+            MoaJson = JsonHelper.Serialize(new[] { "Dra 3" }),
+            PurchasedDate = purchased,
+            ExpiryDate = expiry,
             AccountHolders =
             [
-                new AccountHolder { Name = "Sarah Johnson", Email = "sarah.j@acme.com", Phone = "(555) 123-4567" },
-                new AccountHolder { Name = "John Smith", Email = "john.s@acme.com", Phone = "(555) 123-4568" },
+                new AccountHolder
+                {
+                    Name = "Dan Ra",
+                    Email = "dra@lgb.test",
+                    NeedsMoi = true,
+                },
+                new AccountHolder
+                {
+                    Name = "Daniel Ra",
+                    Email = "dra2@lgb.test",
+                    NeedsMoi = true,
+                    NeedsMoiApproval = true,
+                },
+                new AccountHolder
+                {
+                    Name = "Dra 3",
+                    Email = "dra3@lgb.test",
+                    NeedsMoa = true,
+                },
+            ],
+            Packages =
+            [
+                new CustomerPackage
+                {
+                    PackageName = "Enterprise Plus",
+                    PackageValue = 6980,
+                    Validity = "1 Year",
+                    PurchasedDate = purchased,
+                    ExpiryDate = expiry,
+                    Status = "Active",
+                },
             ],
         };
 
-        var product = new Product
-        {
-            PackageName = "Enterprise Package",
-            ServicesJson = JsonHelper.Serialize(new[]
-            {
-                "Annual Return", "BO Declaration", "Prepare Resolution", "Follow up with Reso signatory",
-            }),
-            ServiceQuantitiesJson = JsonHelper.Serialize(new Dictionary<string, int>
-            {
-                ["Annual Return"] = 1,
-                ["BO Declaration"] = 1,
-                ["Prepare Resolution"] = 18,
-                ["Follow up with Reso signatory"] = 18,
-            }),
-            Unit = "EACH",
-            QtyPerYear = 1,
-            PackagePrice = 5930,
-            AddOnsJson = "[]",
-            AddOnQuantitiesJson = "{}",
-            AddOnsQty = 0,
-            AddOnPrice = 0,
-        };
-
         context.Customers.Add(customer);
-        context.Products.Add(product);
-        context.SaveChanges();
-
-        context.JobRequests.Add(new JobRequest
-        {
-            Customer = "Acme Corp",
-            Service = "Annual Return",
-            UsedQty = 0,
-            TotalQty = 1,
-            DateRequested = DateTime.UtcNow.AddDays(-2),
-            AccountHolder = "Sarah Johnson",
-            JobAssignedTo = "—",
-            Status = "Pending",
-        });
-
-        context.CompletedServices.Add(new CompletedService
-        {
-            Customer = "TechStart Inc",
-            Service = "BO Declaration",
-            UsedQty = 1,
-            TotalQty = 1,
-            DateRequested = DateTime.UtcNow.AddMonths(-2),
-            DateCompleted = DateTime.UtcNow.AddMonths(-1),
-            AccountHolder = "Michael Chen",
-            JobAssignedTo = "Jane Smith",
-            Status = "Completed",
-        });
-
         context.SaveChanges();
     }
 }

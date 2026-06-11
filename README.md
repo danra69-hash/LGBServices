@@ -1,120 +1,101 @@
-# LGBServices
+# LGB Services
 
-LGB Services platform — Figma Make UI, React frontend, and ASP.NET Core backend.
+MOI/MOA workflow app for LGB secretarial teams and client companies (.NET 8 API + React/Vite frontend).
 
-## Contents
+## Prerequisites
 
-- **LGBApp.Frontend/** — React + Vite UI extracted from the Figma Make file `LGB Services`
-- **LGBApp.Backend/** — ASP.NET Core 8 Web API (auth, users, CRM entities, SQL Server / EF Core)
-- **docs/** — Architecture diagrams, design links, and the local Figma Make export
-  - [DESIGN.md](docs/DESIGN.md) — Figma UI link + collaboration notes
-  - [LGB SERVICES.drawio](docs/LGB%20SERVICES.drawio) — architecture diagram
-  - [LGB-Services.make](docs/design/LGB-Services.make) — local Figma Make export (source of the frontend)
+| Tool | Version |
+|------|---------|
+| [.NET SDK](https://dotnet.microsoft.com/download) | 8.0+ |
+| [Node.js](https://nodejs.org/) | 18+ (20 LTS recommended) |
+
+No SQL Server required for local dev — the API uses **SQLite** automatically in Development.
 
 ## Quick start
 
-### Prerequisites
-
-Node.js and the .NET 8 SDK are installed under `~/.local/`. Add them to your PATH:
-
 ```bash
-source scripts/dev-path.sh
-```
+git clone https://github.com/danra69-hash/LGBServices.git
+cd LGBServices
 
-To make this permanent, add that line to your `~/.zshrc`.
-
-### 1. Backend
-
-```bash
-source scripts/dev-path.sh
+# 1. Backend (creates & seeds the database on first run)
 cd LGBApp.Backend
 dotnet run
-```
+# API: http://localhost:5003  Swagger: http://localhost:5003/swagger
 
-Swagger UI: `http://localhost:5003/swagger`
-
-**macOS / local dev:** `appsettings.Development.json` uses SQLite (`lgbapp-dev.db` in `LGBApp.Backend/`). Schema is created on startup via `EnsureCreated()`.
-
-**Windows / SQL Server:** set `Database:Provider` to `SqlServer` (or omit it) and configure `DefaultConnection` in `appsettings.json`. Migrations run automatically on startup; or apply manually:
-
-```bash
-dotnet ef database update
-```
-
-### 2. Frontend
-
-```bash
-source scripts/dev-path.sh
-cd LGBApp.Frontend
-npm install --legacy-peer-deps
+# 2. Frontend (new terminal)
+cd ../LGBApp.Frontend
+npm install
 npm run dev
+# UI: http://localhost:5173
 ```
 
-Open `http://localhost:5173`. The dev server proxies `/api` requests to the backend on port `5003`.
+Open **http://localhost:5173**, log in with any account below (password **`password123`**). You will be prompted to change the password on first login.
 
-### 3. Sign in
+The Vite dev server proxies `/api` → `http://localhost:5003`. To point at another API host, copy `.env.example` to `.env` and set `VITE_API_BASE`.
 
-Register a user via Swagger (`POST /api/auth/register`) or the API, then use the **Login Page** tab or **Sign in** button in the header. Set a user's `Role` to `Admin` in the database (or via Admin user management) to access the Admin tab.
+## What happens on first backend run
 
-## Design (Figma)
+You do **not** need to commit or download a database file. On startup the API:
 
-The UI prototype **LGB Services** was built in [Figma Make](https://www.figma.com/make). The exported `.make` file is stored in `docs/design/` and was used to generate `LGBApp.Frontend/`. See [docs/DESIGN.md](docs/DESIGN.md) for collaboration notes and the live Figma project link.
+1. Creates `LGBApp.Backend/lgbapp-dev.db` (gitignored)
+2. Applies SQLite schema migrations
+3. Seeds demo customer **Acme Corp** with **Enterprise Plus** package
+4. Seeds internal LGB staff, form templates, and product catalog
+5. Syncs package service lines into jobs (board meetings, resolutions, etc.)
+6. Provisions MOI/MOA forms and repairs multi-session integrity
 
-## Integration
+To **reset** local data: stop the API, delete `LGBApp.Backend/lgbapp-dev.db`, and run `dotnet run` again.
 
-| Layer | Role |
-|-------|------|
-| Figma Make | UI design + interactive prototype |
-| LGBApp.Frontend | Production React app (extracted from `.make`, wired to API) |
-| LGBApp.Backend | Auth, users, customers, products, jobs, forms, dashboard |
+## Default accounts (Development)
 
-## API endpoints
+All seeded passwords: **`password123`** (must change on first login).
 
-### Auth
-- `POST /api/auth/login` — Sign in (returns JWT + user profile)
-- `POST /api/auth/register` — Register new user (public; creates `User` role)
+### Internal (LGB)
 
-### Users (JWT required; Admin for list/create/update/delete)
-- `GET /api/users` — List all users
-- `GET /api/users/me` — Current user profile
-- `GET /api/users/{id}` — Get user by ID
-- `POST /api/users` — Create user with role (Admin)
-- `PUT /api/users/{id}` — Update user
-- `DELETE /api/users/{id}` — Delete user
+| Email | Role | Notes |
+|-------|------|-------|
+| `sharon@lgb.test` | Admin | MOI intake, assignment, sign-off |
+| `ngpohli@lgb.test` | User | Resolution prep |
+| `nita@lgb.test` | User | Resolution prep |
+| `siti@lgb.test` | User | Resolution prep |
+| `nadia@lgb.test` | User | Resolution prep |
 
-### Customers (JWT required)
-- `GET /api/customers?search=` — List/search customers
-- `GET /api/customers/{id}` — Get customer
-- `POST /api/customers` — Create customer
-- `PUT /api/customers/{id}` — Update customer
-- `DELETE /api/customers/{id}` — Delete customer
+### Client — Acme Corp (demo company)
 
-### Products (JWT required; Admin for create/update/delete)
-- `GET /api/products` — List products
-- `GET /api/products/{id}` — Get product
-- `POST /api/products` — Create product (Admin)
-- `PUT /api/products/{id}` — Update product (Admin)
-- `DELETE /api/products/{id}` — Delete product (Admin)
+| Email | Role | Notes |
+|-------|------|-------|
+| `clientadmin@acme.test` | Client Admin | Issues MOI, sets dates, invites team |
+| `dra@lgb.test` | Client Signatory | MOI issuer (Dan Ra) |
+| `dra2@lgb.test` | Client Signatory | MOI issuer + MOI approver (Daniel Ra) |
+| `dra3@lgb.test` | Client Signatory | MOA signatory |
 
-### Job requests (JWT required)
-- `GET /api/jobrequests` — Active jobs (Pending / In Progress)
-- `GET /api/jobrequests/{id}` — Get job
-- `POST /api/jobrequests` — Create job
-- `PUT /api/jobrequests/{id}` — Update job (completing/canceling copies to completed services)
-- `DELETE /api/jobrequests/{id}` — Delete job (Admin)
+**Enterprise Plus** includes add-ons such as **Attend Board Meeting** (4 sessions) and **Prepare board meeting Minutes** (2 sessions) — useful for testing per-session MOI/MOA and category counters on the client portal.
 
-### Completed services (JWT required)
-- `GET /api/completedservices?search=&year=` — List completed/canceled services
+## Project layout
 
-### Forms (JWT required)
-- `GET /api/moiforms?jobId=` — List MOI forms
-- `POST /api/moiforms` — Create MOI form
-- `PUT /api/moiforms/{id}` — Update MOI form
-- `DELETE /api/moiforms/{id}` — Delete MOI form (Admin)
-- `GET /api/moaforms` — List MOA forms
-- `POST /api/moaforms` — Create MOA form
-- `PUT /api/moaforms/{id}` — Update MOA form
-- `DELETE /api/moaforms/{id}` — Delete MOA form (Admin)
+```
+LGBServices/
+├── LGBApp.Backend/     # ASP.NET Core API (SQLite in dev)
+├── LGBApp.Frontend/    # React + Vite UI
+└── docs/               # Role docs & diagrams (optional PDF build)
+```
 
-### Dashboard (JWT required)
-- `GET /api/dashboard/stats` — Aggregate KPIs for dashboard cards
+## Optional: rebuild role documentation PDFs
+
+Diagram sources live in `docs/diagrams/`. To regenerate PDFs you need Node tooling locally (not required to run the app):
+
+```bash
+cd docs
+npm install @mermaid-js/mermaid-cli   # if not already installed
+python3 build-user-roles-pdf.py
+```
+
+## Production notes
+
+- Set `Database:Provider` to `SqlServer` and configure `ConnectionStrings:DefaultConnection` in `appsettings.json`.
+- Change `Jwt:Key` and use secrets management — never commit production credentials.
+- `lgbapp-dev.db`, `lgbapp.db`, and all `node_modules/` folders are intentionally **not** in git.
+
+## Further reading
+
+- [docs/USER_ROLES.md](docs/USER_ROLES.md) — role hierarchy and MOI/MOA pipeline

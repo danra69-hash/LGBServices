@@ -42,3 +42,10 @@ LGBApp.Frontend/node_modules/
 LGBApp.Frontend/dist/
 LGBApp.Frontend/.env
 LGBApp.Frontend/.env.local
+
+## Local SQLite (created on first dotnet run)
+LGBApp.Backend/lgbapp.db
+LGBApp.Backend/lgbapp.db-*
+
+## Docs tooling (optional PDF build)
+docs/node_modules/
