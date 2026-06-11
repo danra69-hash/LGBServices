@@ -269,6 +269,18 @@ export function canOpenMoiForm(job: JobRequestResponse): boolean {
   return job.taskType === 'MOI' || job.taskType === 'MOI Approval' || job.taskType === 'Service';
 }
 
+export function jobUnitsForAssignment(job: JobRequestResponse): JobRequestUnitDto[] {
+  if (job.units?.length) return job.units;
+  return [{
+    id: 0,
+    unitNumber: 1,
+    assignedUserName: job.jobAssignedTo ?? '',
+    status: job.status as JobRequestUnitDto['status'],
+    scheduledDate: job.scheduledDate,
+    assignees: [],
+  }];
+}
+
 export function canAssignSecretarialTeam(job: JobRequestResponse, _allJobs: JobRequestResponse[]): boolean {
   const handoff = job.internalHandoffStatus ?? '';
   if (handoff === 'ClientSubmitted') return false;

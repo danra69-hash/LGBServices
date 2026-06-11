@@ -197,9 +197,11 @@ public class JobRequestsController : ControllerBase
     }
 
     [HttpPost("{id}/assign")]
-    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> AssignJob(int id, AssignJobRequest request)
     {
+        if (!AuthHelper.IsAdmin(User) && !AuthHelper.CanApproveMoi(User))
+            return Forbid();
+
         var job = await JobQuery().FirstOrDefaultAsync(j => j.JobRequestId == id);
         if (job == null)
             return NotFound();
@@ -207,6 +209,9 @@ public class JobRequestsController : ControllerBase
         var user = await _context.Users.FindAsync(request.UserId);
         if (user == null)
             return BadRequest(new { message = "Selected user was not found." });
+
+        if (!SecretarialStaffService.IsAssignableInternalStaff(user))
+            return BadRequest(new { message = "Only internal secretarial staff or internal admins can be assigned to jobs." });
 
         await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
         job = await JobQuery().FirstAsync(j => j.JobRequestId == id);

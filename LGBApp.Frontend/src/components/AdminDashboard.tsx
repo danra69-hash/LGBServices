@@ -4,23 +4,30 @@ import { AdminPackageOverview } from './AdminPackageOverview';
 import { CompletedServicesTable } from './CompletedServicesTable';
 import { MyWorkTracker } from './MyWorkTracker';
 import { StatsCards } from './StatsCards';
+import { UserAssignCell } from './UserAssignCell';
 import { WorkQueueDragHandle } from './WorkQueueDragHandle';
 import { WorkQueueOrderHint } from './WorkQueueOrderHint';
 import { useWorkQueueOrder } from '@/hooks/useWorkQueueOrder';
 import {
   ApiError,
+  assignJobRequest,
   getJobRequests,
   type CustomerPackageDto,
   type CustomerResponse,
   type JobRequestResponse,
   type UserResponse,
 } from '@/lib/api';
-import { canAssignSecretarialTeam } from '@/lib/packageItemStatus';
+import {
+  canAssignSecretarialTeam,
+  jobUnitsForAssignment,
+} from '@/lib/packageItemStatus';
+import { canAssignJobStaff } from '@/lib/roles';
 import { formatQueueDate, parseQueueSortDate } from '@/lib/workQueueOrder';
 
 interface AdminDashboardProps {
   refreshKey?: number;
   currentUser: UserResponse;
+  assignableUsers: { id: number; name: string }[];
   onManagePackage: (customer: CustomerResponse, pkg: CustomerPackageDto) => void;
   onOpenTask: (jobId: number) => void;
   onViewHistory: () => void;
@@ -61,21 +68,26 @@ function attentionSortDate(job: JobRequestResponse): number {
 export function AdminDashboard({
   refreshKey = 0,
   currentUser,
+  assignableUsers,
   onManagePackage,
   onOpenTask,
   onViewHistory,
   onError,
   onSuccess,
 }: AdminDashboardProps) {
+  const [allJobs, setAllJobs] = useState<JobRequestResponse[]>([]);
   const [attentionJobs, setAttentionJobs] = useState<JobRequestResponse[]>([]);
   const [loadingAttention, setLoadingAttention] = useState(true);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
 
+  const canManageAssignments = canAssignJobStaff(currentUser);
+
   const loadAttention = useCallback(async () => {
     setLoadingAttention(true);
     try {
       const jobs = await getJobRequests();
+      setAllJobs(jobs);
       const filtered = jobs.filter((job) => {
         const unitAwaitingIntake = job.units?.some((u) => u.awaitingIntakeApproval) ?? false;
         if ((job.awaitingIntakeApproval || unitAwaitingIntake) && currentUser.canApproveMoiIntake)
@@ -85,18 +97,19 @@ export function AdminDashboard({
         if (job.internalHandoffStatus === 'MoaSharonApproved'
           && (currentUser.canApproveMoa || currentUser.role === 'Admin'))
           return true;
-        if (canAssignSecretarialTeam(job, jobs) && currentUser.role === 'Admin')
+        if (canAssignSecretarialTeam(job, jobs) && canManageAssignments)
           return true;
         return false;
       });
       setAttentionJobs(filtered);
     } catch (err) {
       onError(err instanceof ApiError ? err.message : 'Failed to load action queue.');
+      setAllJobs([]);
       setAttentionJobs([]);
     } finally {
       setLoadingAttention(false);
     }
-  }, [currentUser, onError]);
+  }, [currentUser, canManageAssignments, onError]);
 
   useEffect(() => {
     void loadAttention();
@@ -129,6 +142,25 @@ export function AdminDashboard({
     setDropTargetKey(null);
   };
 
+  const handleAssignUnit = async (
+    jobId: number,
+    unitNumber: number,
+    userId: number,
+    remove = false,
+  ) => {
+    try {
+      const updated = await assignJobRequest(jobId, { userId, unitNumber, remove });
+      setAllJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
+      setAttentionJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
+      onSuccess();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : remove ? 'Failed to remove assignee.' : 'Failed to assign staff.');
+    }
+  };
+
+  const resolveJob = (jobId: number) =>
+    allJobs.find((j) => j.id === jobId) ?? attentionJobs.find((j) => j.id === jobId);
+
   return (
     <div className="space-y-8">
       <div>
@@ -159,6 +191,10 @@ export function AdminDashboard({
               const key = getAttentionKey(job);
               const isDragging = draggingKey === key;
               const isDropTarget = dropTargetKey === key && draggingKey !== key;
+              const liveJob = resolveJob(job.id) ?? job;
+              const showAssignment = canManageAssignments && canAssignSecretarialTeam(liveJob, allJobs);
+              const units = jobUnitsForAssignment(liveJob);
+              const multiUnit = (liveJob.totalQty ?? 1) > 1;
               return (
                 <li
                   key={key}
@@ -179,28 +215,48 @@ export function AdminDashboard({
                     e.preventDefault();
                     handleDrop(key);
                   }}
-                  className={`flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
+                  className={`px-4 py-3 text-sm transition-colors ${
                     isDragging ? 'opacity-50 bg-muted/40' : ''
                   } ${isDropTarget ? 'bg-primary/5 ring-1 ring-inset ring-primary/30' : ''}`}
                 >
-                  <WorkQueueDragHandle />
-                  <div className="w-24 shrink-0">
-                    <p className="text-xs text-muted-foreground">Date</p>
-                    <p className="font-medium tabular-nums">{attentionDate(job)}</p>
+                  <div className="flex items-start gap-3">
+                    <WorkQueueDragHandle />
+                    <div className="w-24 shrink-0">
+                      <p className="text-xs text-muted-foreground">Date</p>
+                      <p className="font-medium tabular-nums">{attentionDate(liveJob)}</p>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">
+                        {liveJob.customer} — {liveJob.taskType === 'Service' ? liveJob.service : liveJob.taskType}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{attentionLabel(liveJob)}</p>
+                      {showAssignment && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-xs font-medium text-muted-foreground">Assign team</p>
+                          {units.map((unit) => (
+                            <div key={unit.unitNumber} className="flex flex-wrap items-center gap-2">
+                              {multiUnit && (
+                                <span className="text-xs text-muted-foreground w-8 shrink-0">#{unit.unitNumber}</span>
+                              )}
+                              <UserAssignCell
+                                unit={unit}
+                                users={assignableUsers}
+                                onAdd={(userId) => void handleAssignUnit(liveJob.id, unit.unitNumber, userId)}
+                                onRemove={(userId) => void handleAssignUnit(liveJob.id, unit.unitNumber, userId, true)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenTask(liveJob.id)}
+                      className="shrink-0 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-muted"
+                    >
+                      Open
+                    </button>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">
-                      {job.customer} — {job.taskType === 'Service' ? job.service : job.taskType}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{attentionLabel(job)}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onOpenTask(job.id)}
-                    className="shrink-0 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-muted"
-                  >
-                    Open
-                  </button>
                 </li>
               );
             })}

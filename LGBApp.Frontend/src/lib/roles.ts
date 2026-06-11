@@ -42,6 +42,20 @@ export function canManageUsers(user: UserResponse | null): boolean {
   return isAdmin(user) || isClientAdmin(user);
 }
 
+/** Internal Admins + resolution secretaries (no client link, no approval roles). */
+export function isAssignableInternalStaff(user: UserResponse): boolean {
+  if (user.customerId != null) return false;
+  if (isAdmin(user)) return true;
+  return user.role === ROLES.User
+    && !user.canApproveMoiIntake
+    && !user.canApproveMoi
+    && !user.canApproveMoa;
+}
+
+export function canAssignJobStaff(user: UserResponse | null): boolean {
+  return isAdmin(user) || Boolean(user?.canApproveMoi);
+}
+
 export function roleLabel(role: string): string {
   switch (role) {
     case ROLES.Admin: return 'Admin (internal)';

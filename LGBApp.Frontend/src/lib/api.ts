@@ -439,6 +439,8 @@ export {
   isClientStaff,
   isExternalUser,
   canManageUsers,
+  canAssignJobStaff,
+  isAssignableInternalStaff,
   roleLabel,
 } from '@/lib/roles';
 

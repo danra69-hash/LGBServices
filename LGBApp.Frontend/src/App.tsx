@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LayoutDashboard, Users, Package, Shield, CalendarDays, UserPlus } from 'lucide-react';
 import { StatsCards } from './components/StatsCards';
 import { CustomerTable } from './components/CustomerTable';
@@ -73,6 +73,7 @@ import {
   isExternalUser,
   isInternalStaff,
   roleLabel,
+  isAssignableInternalStaff,
   setAuthExpiredHandler,
   updateCustomer,
   updateJobRequest,
@@ -96,7 +97,14 @@ export default function App() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [myCompany, setMyCompany] = useState<CustomerResponse | null>(null);
   const [products, setProducts] = useState<ProductResponse[]>([]);
+  const [directoryUsers, setDirectoryUsers] = useState<UserResponse[]>([]);
   const [apiUsers, setApiUsers] = useState<{ id: number; name: string }[]>([]);
+  const assignableUsers = useMemo(
+    () => directoryUsers
+      .filter(isAssignableInternalStaff)
+      .map((u) => ({ id: u.userId, name: u.name })),
+    [directoryUsers],
+  );
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [selectedPackageWork, setSelectedPackageWork] = useState<{
     customer: Customer;
@@ -176,8 +184,10 @@ export default function App() {
   const loadUsers = useCallback(async () => {
     try {
       const data = await getUsers();
+      setDirectoryUsers(data);
       setApiUsers(data.map((u) => ({ id: u.userId, name: u.name })));
     } catch {
+      setDirectoryUsers([]);
       setApiUsers([]);
     }
   }, []);
@@ -1365,7 +1375,7 @@ export default function App() {
                 <PackageWorkboard
                   customer={selectedPackageWork.customer}
                   package={selectedPackageWork.package}
-                  users={apiUsers}
+                  users={assignableUsers}
                   userIsAdmin={userIsAdmin}
                   canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
                   refreshKey={refreshKey}
@@ -1379,6 +1389,7 @@ export default function App() {
                 <AdminDashboard
                   refreshKey={refreshKey}
                   currentUser={currentUser}
+                  assignableUsers={assignableUsers}
                   onManagePackage={(customer, pkg) => setSelectedPackageWork({ customer, package: pkg })}
                   onOpenTask={(jobId) => void handleOpenTrackerTask(jobId)}
                   onViewHistory={() => setIsHistoryModalOpen(true)}
