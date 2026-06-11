@@ -20,6 +20,40 @@ export interface UserResponse {
   isVerified: boolean;
   mustChangePassword: boolean;
   createdAt: string;
+  accessibleCompanies?: SignatoryCompanyAccessDto[];
+}
+
+export interface SignatoryCompanyAccessDto {
+  customerId: number;
+  company: string;
+}
+
+export interface SignatoryOverlapDto {
+  email: string;
+  primaryName: string;
+  companyCount: number;
+  isLinked: boolean;
+  linkedUserId?: number;
+  companies: SignatoryOverlapCompanyDto[];
+}
+
+export interface SignatoryOverlapCompanyDto {
+  customerId: number;
+  company: string;
+  accountHolderId: number;
+  holderName: string;
+  needsMoi: boolean;
+  needsMoiApproval: boolean;
+  needsMoa: boolean;
+  userId?: number;
+}
+
+export interface SignatoryLinkResultDto {
+  email: string;
+  userId: number;
+  holdersLinked: number;
+  customerIds: number[];
+  message: string;
 }
 
 export interface AuthResponse {
@@ -1326,4 +1360,15 @@ export async function updatePackageSchedule(
 
 export async function deletePackageSchedule(id: number): Promise<void> {
   return request<void>(`/api/packageschedules/${id}`, { method: 'DELETE' });
+}
+
+export async function getSignatoryOverlaps(): Promise<SignatoryOverlapDto[]> {
+  return request<SignatoryOverlapDto[]>('/api/signatory-dedup/overlaps');
+}
+
+export async function linkSignatoryByEmail(email: string): Promise<SignatoryLinkResultDto> {
+  return request<SignatoryLinkResultDto>('/api/signatory-dedup/link', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
 }

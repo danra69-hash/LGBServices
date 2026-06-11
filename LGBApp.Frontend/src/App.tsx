@@ -11,6 +11,7 @@ import { ServiceHistoryModal } from './components/ServiceHistoryModal';
 import { CreateCustomerModal } from './components/CreateCustomerModal';
 import { CreateProductModal } from './components/CreateProductModal';
 import { UserManagement } from './components/UserManagement';
+import { AdminSignatoryDedup } from './components/AdminSignatoryDedup';
 import { AdminWorkflowConfig } from './components/AdminWorkflowConfig';
 import { BillingPartiesAdmin } from './components/BillingPartiesAdmin';
 import { AdminFormTemplates } from './components/AdminFormTemplates';
@@ -1526,6 +1527,7 @@ export default function App() {
               onCreateUser={() => setIsCreateUserModalOpen(true)}
             />
             <BillingPartiesAdmin />
+            <AdminSignatoryDedup refreshKey={refreshKey} />
             <AdminWorkflowConfig refreshKey={refreshKey} />
             <AdminFormTemplates refreshKey={refreshKey} />
             <FormsManagement onViewMOI={openMOICreate} onViewMOA={openMOACreate} />

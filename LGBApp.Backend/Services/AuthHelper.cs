@@ -41,6 +41,23 @@ public static class AuthHelper
         return int.TryParse(raw, out var id) ? id : null;
     }
 
+    public static HashSet<int> GetAccessibleCustomerIds(ClaimsPrincipal user)
+    {
+        var claim = user.FindFirstValue("accessible_customer_ids");
+        if (!string.IsNullOrWhiteSpace(claim))
+        {
+            return claim
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => int.TryParse(s, out var id) ? id : (int?)null)
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .ToHashSet();
+        }
+
+        var single = CurrentCustomerId(user);
+        return single.HasValue ? [single.Value] : [];
+    }
+
     public static string? CurrentUserName(ClaimsPrincipal user) =>
         user.FindFirstValue(ClaimTypes.Name);
 
@@ -79,6 +96,9 @@ public static class AuthHelper
 
         if (!customerId.HasValue)
             return false;
+
+        if (IsClientSignatory(user))
+            return GetAccessibleCustomerIds(user).Contains(customerId.Value);
 
         var scopedCustomerId = CurrentCustomerId(user);
         return scopedCustomerId.HasValue && scopedCustomerId.Value == customerId.Value;
@@ -166,10 +186,13 @@ public static class AuthHelper
         if (customer == null)
             return false;
 
+        var userId = CurrentUserId(user);
         var holder = customer.AccountHolders.FirstOrDefault(h =>
-            h.Name.Equals(userName.Trim(), StringComparison.OrdinalIgnoreCase));
+            userId.HasValue && h.UserId == userId && h.NeedsMoi)
+            ?? customer.AccountHolders.FirstOrDefault(h =>
+                h.NeedsMoi && h.Name.Equals(userName.Trim(), StringComparison.OrdinalIgnoreCase));
 
-        return holder is { NeedsMoi: true };
+        return holder != null;
     }
 
     public static bool CanManageUsers(ClaimsPrincipal user) =>
@@ -182,6 +205,12 @@ public static class AuthHelper
 
         if (!CanAccessCustomer(user, job.CustomerId))
             return false;
+
+        var email = user.FindFirstValue(ClaimTypes.Email);
+        if (!string.IsNullOrWhiteSpace(email)
+            && !string.IsNullOrWhiteSpace(job.AccountHolderEmail)
+            && string.Equals(email.Trim(), job.AccountHolderEmail.Trim(), StringComparison.OrdinalIgnoreCase))
+            return true;
 
         var name = CurrentUserName(user);
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(job.AccountHolder))

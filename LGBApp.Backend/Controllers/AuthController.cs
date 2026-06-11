@@ -15,11 +15,16 @@ public class AuthController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly JwtTokenService _tokenService;
+    private readonly SignatoryAccessService _signatoryAccess;
 
-    public AuthController(AppDbContext context, JwtTokenService tokenService)
+    public AuthController(
+        AppDbContext context,
+        JwtTokenService tokenService,
+        SignatoryAccessService signatoryAccess)
     {
         _context = context;
         _tokenService = tokenService;
+        _signatoryAccess = signatoryAccess;
     }
 
     [HttpPost("register")]
@@ -60,10 +65,11 @@ public class AuthController : ControllerBase
         if (user == null || !PasswordHasher.Verify(request.Password, user.PasswordHash))
             return Unauthorized("Invalid email or password.");
 
+        var accessibleIds = await _signatoryAccess.GetAccessibleCustomerIdsAsync(_context, user);
         return Ok(new AuthResponse
         {
-            Token = _tokenService.GenerateToken(user),
-            User = UserMapper.ToResponse(user, user.Customer)
+            Token = _tokenService.GenerateToken(user, accessibleIds),
+            User = await UserMapper.ToResponseAsync(_context, user, user.Customer),
         });
     }
 
@@ -98,10 +104,11 @@ public class AuthController : ControllerBase
         user.MustChangePassword = false;
         await _context.SaveChangesAsync();
 
+        var accessibleIds = await _signatoryAccess.GetAccessibleCustomerIdsAsync(_context, user);
         return Ok(new AuthResponse
         {
-            Token = _tokenService.GenerateToken(user),
-            User = UserMapper.ToResponse(user, user.Customer),
+            Token = _tokenService.GenerateToken(user, accessibleIds),
+            User = await UserMapper.ToResponseAsync(_context, user, user.Customer),
         });
     }
 }

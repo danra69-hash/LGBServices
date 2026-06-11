@@ -45,6 +45,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 });
 
 builder.Services.AddScoped<JwtTokenService>();
+builder.Services.AddScoped<SignatoryAccessService>();
+builder.Services.AddScoped<SignatoryDedupService>();
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Jwt:Key is not configured.");
 
@@ -108,6 +110,8 @@ using (var scope = app.Services.CreateScope())
         BillingPartyService.SeedFromLegacyCustomerFieldsAsync(context).GetAwaiter().GetResult();
         CustomerClientAdminProvisioner.EnsureAllCustomersHaveClientAdminAsync(context).GetAwaiter().GetResult();
         CustomerSignatoryProvisioner.EnsureAllCustomerSignatoriesAsync(context).GetAwaiter().GetResult();
+        scope.ServiceProvider.GetRequiredService<SignatoryAccessService>()
+            .BackfillFromHoldersAsync(context).GetAwaiter().GetResult();
         FigmaProductCatalog.SyncCatalog(context);
         JobRequestSyncService.LinkOrphanJobs(context);
         context.SaveChanges();

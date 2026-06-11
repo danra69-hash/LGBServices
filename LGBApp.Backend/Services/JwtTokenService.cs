@@ -15,7 +15,7 @@ public class JwtTokenService
         _configuration = configuration;
     }
 
-    public string GenerateToken(User user)
+    public string GenerateToken(User user, IReadOnlyList<int>? accessibleCustomerIds = null)
     {
         var key = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
@@ -31,6 +31,12 @@ public class JwtTokenService
         };
         if (user.CustomerId.HasValue)
             claims.Add(new Claim("customer_id", user.CustomerId.Value.ToString()));
+        if (accessibleCustomerIds is { Count: > 0 })
+        {
+            claims.Add(new Claim(
+                "accessible_customer_ids",
+                string.Join(",", accessibleCustomerIds.OrderBy(id => id))));
+        }
         if (user.MustChangePassword)
             claims.Add(new Claim("must_change_password", "true"));
         if (user.CanApproveMoiIntake)

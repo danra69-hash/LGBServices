@@ -21,4 +21,5 @@ public class UserResponse
     public bool IsVerified { get; set; }
     public bool MustChangePassword { get; set; }
     public DateTime CreatedAt { get; set; }
+    public List<SignatoryCompanyAccessDto>? AccessibleCompanies { get; set; }
 }

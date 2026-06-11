@@ -25,8 +25,10 @@ public class ClientJobsController : ControllerBase
         if (!AuthHelper.IsAdmin(User) && !AuthHelper.IsExternalUser(User))
             return Forbid();
 
-        var customerId = AuthHelper.CurrentCustomerId(User);
-        if (!customerId.HasValue && !AuthHelper.IsAdmin(User))
+        var accessibleCustomerIds = AuthHelper.IsAdmin(User)
+            ? null
+            : AuthHelper.GetAccessibleCustomerIds(User).ToList();
+        if (!AuthHelper.IsAdmin(User) && (accessibleCustomerIds?.Count ?? 0) == 0)
             return BadRequest("External users must be linked to a customer.");
 
         var query = _context.JobRequests
@@ -36,8 +38,8 @@ public class ClientJobsController : ControllerBase
         if (!includeCompleted)
             query = query.Where(j => j.Status != "Completed" && j.Status != "Canceled");
 
-        if (!AuthHelper.IsAdmin(User))
-            query = query.Where(j => j.CustomerId == customerId);
+        if (accessibleCustomerIds != null)
+            query = query.Where(j => j.CustomerId.HasValue && accessibleCustomerIds.Contains(j.CustomerId.Value));
 
         var jobs = await query
             .OrderByDescending(j => j.DateRequested)

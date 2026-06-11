@@ -30,6 +30,16 @@ public static class ClientApprovalService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    public static AccountHolder? FindMoaHolderForUser(Customer customer, User user) =>
+        customer.AccountHolders.FirstOrDefault(h => h.UserId == user.UserId && h.NeedsMoa)
+        ?? customer.AccountHolders.FirstOrDefault(h =>
+            h.NeedsMoa
+            && !string.IsNullOrWhiteSpace(h.Email)
+            && h.Email.Equals(user.Email, StringComparison.OrdinalIgnoreCase))
+        ?? customer.AccountHolders.FirstOrDefault(h =>
+            h.NeedsMoa
+            && h.Name.Equals(user.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public static bool HasSigned(List<ClientApprovalRecord> records, string holderName) =>
         records.Any(r => r.AccountHolderName.Equals(holderName, StringComparison.OrdinalIgnoreCase));
 

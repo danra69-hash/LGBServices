@@ -343,7 +343,9 @@ export function ClientPortal({ currentUser, onOpenForm, refreshKey = 0, mode = '
           <h2 className="text-xl font-semibold">{isSignatoryView ? 'My documents' : 'Client portal'}</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {isSignatoryView
-              ? `${currentUser.customerName ?? 'Your company'} — each package item has its own MOI/MOA; open a line to fill or sign.`
+              ? `${(currentUser.accessibleCompanies?.length ?? 0) > 1
+                ? currentUser.accessibleCompanies!.map((c) => c.company).join(', ')
+                : currentUser.customerName ?? 'Your company'} — each package item has its own MOI/MOA; open a line to fill or sign.`
               : `${currentUser.customerName ?? 'Your company'} — each package line has its own MOI/MOA workflow; set dates and track every item.`}
           </p>
         </div>

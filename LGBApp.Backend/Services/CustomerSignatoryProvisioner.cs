@@ -73,16 +73,15 @@ public static class CustomerSignatoryProvisioner
             user = await context.Users.FindAsync(holder.UserId.Value);
 
         user ??= await context.Users.FirstOrDefaultAsync(u =>
-            u.CustomerId == customer.CustomerId
-            && u.Role == UserRoles.ClientSignatory
-            && u.Email == holder.Email);
+            u.Role == UserRoles.ClientSignatory
+            && u.Email == holder.Email.Trim());
 
         if (user != null)
         {
-            user.Name = holder.Name;
-            user.Mobile = holder.Phone ?? string.Empty;
-            user.CustomerId = customer.CustomerId;
+            user.Mobile = holder.Phone ?? user.Mobile;
+            user.CustomerId ??= customer.CustomerId;
             holder.UserId = user.UserId;
+            await new SignatoryAccessService().EnsureAccessAsync(context, user.UserId, customer.CustomerId);
             return user;
         }
 
@@ -104,6 +103,7 @@ public static class CustomerSignatoryProvisioner
         await context.SaveChangesAsync();
 
         holder.UserId = user.UserId;
+        await new SignatoryAccessService().EnsureAccessAsync(context, user.UserId, customer.CustomerId);
         if (clientAdded)
         {
             holder.ClientAdded = true;
@@ -139,6 +139,7 @@ public static class CustomerSignatoryProvisioner
         }
 
         holder.UserId = user.UserId;
+        await new SignatoryAccessService().EnsureAccessAsync(context, user.UserId, customerId);
         SyncCustomerSignerLists(customer);
         await context.SaveChangesAsync();
     }

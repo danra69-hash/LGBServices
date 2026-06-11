@@ -178,10 +178,14 @@ public class MOAFormsController : ControllerBase
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest("Customer not found.");
 
-        var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
-        var holderName = user.Name.Trim();
-        if (!required.Any(n => n.Equals(holderName, StringComparison.OrdinalIgnoreCase)))
+        if (!AuthHelper.CanAccessCustomer(User, customer.CustomerId))
             return Forbid();
+
+        var holder = ClientApprovalService.FindMoaHolderForUser(customer, user);
+        if (holder == null)
+            return Forbid();
+
+        var holderName = holder.Name.Trim();
 
         var records = ClientApprovalService.ParseMoa(form);
         if (ClientApprovalService.HasSigned(records, holderName))
@@ -233,9 +237,10 @@ public class MOAFormsController : ControllerBase
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest("Customer not found.");
 
-        var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
-        var holderName = user.Name.Trim();
-        if (!required.Any(n => n.Equals(holderName, StringComparison.OrdinalIgnoreCase)))
+        if (!AuthHelper.CanAccessCustomer(User, customer.CustomerId))
+            return Forbid();
+
+        if (ClientApprovalService.FindMoaHolderForUser(customer, user) == null)
             return Forbid();
 
         await JobHandoffService.OnMoaClientRejectedAsync(_context, job, form, user, request.Reason);

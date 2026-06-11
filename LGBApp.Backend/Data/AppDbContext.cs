@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<ServiceJobForm> ServiceJobForms { get; set; }
     public DbSet<BillingParty> BillingParties { get; set; }
     public DbSet<JobItemDocument> JobItemDocuments { get; set; }
+    public DbSet<SignatoryCustomerAccess> SignatoryCustomerAccess { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(entity =>
@@ -111,6 +112,20 @@ public class AppDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(h => h.UserId)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<SignatoryCustomerAccess>(entity =>
+        {
+            entity.HasKey(a => a.SignatoryCustomerAccessId);
+            entity.HasIndex(a => new { a.UserId, a.CustomerId }).IsUnique();
+            entity.HasOne(a => a.User)
+                .WithMany()
+                .HasForeignKey(a => a.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(a => a.Customer)
+                .WithMany()
+                .HasForeignKey(a => a.CustomerId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<Product>(entity =>

@@ -333,6 +333,22 @@ public static class SqliteSchemaMigrator
                 CONSTRAINT "FK_PackageScheduleItems_CustomerPackages_CustomerPackageId" FOREIGN KEY ("CustomerPackageId") REFERENCES "CustomerPackages" ("CustomerPackageId") ON DELETE CASCADE
             );
             """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "SignatoryCustomerAccess" (
+                "SignatoryCustomerAccessId" INTEGER NOT NULL CONSTRAINT "PK_SignatoryCustomerAccess" PRIMARY KEY AUTOINCREMENT,
+                "UserId" INTEGER NOT NULL,
+                "CustomerId" INTEGER NOT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                CONSTRAINT "FK_SignatoryCustomerAccess_Users_UserId" FOREIGN KEY ("UserId") REFERENCES "Users" ("UserId") ON DELETE CASCADE,
+                CONSTRAINT "FK_SignatoryCustomerAccess_Customers_CustomerId" FOREIGN KEY ("CustomerId") REFERENCES "Customers" ("CustomerId") ON DELETE CASCADE
+            );
+            """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_SignatoryCustomerAccess_UserId_CustomerId"
+            ON "SignatoryCustomerAccess" ("UserId", "CustomerId");
+            """);
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)
