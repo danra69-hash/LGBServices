@@ -40,6 +40,7 @@ import {
   createCustomer,
   deleteCustomer,
   adminOverrideMoiForm,
+  approveMoiIntake,
   advanceJobHandoff,
   clientApproveMoaForm,
   uploadJobItemDocument,
@@ -55,6 +56,7 @@ import {
   updateMOAForm,
   updateMoaPack,
   recommendMoiForm,
+  rejectMoiIntake,
   createProduct,
   createUser,
   getCustomers,
@@ -947,6 +949,69 @@ export default function App() {
     }
   };
 
+  const resolveIntakeUnitNumber = (
+    job: JobRequestResponse | null,
+    moiForm: Record<string, unknown> | null | undefined,
+  ): number | undefined => {
+    if (!job || (job.totalQty ?? 1) <= 1) return undefined;
+    const n = job.activeUnitNumber
+      ?? (moiForm?.unitNumber as number | undefined)
+      ?? (moiForm?.activeUnitNumber as number | undefined);
+    return n;
+  };
+
+  const isAwaitingMoiIntake = (
+    job: JobRequestResponse | null,
+    moiForm: Record<string, unknown> | null | undefined,
+  ): boolean => {
+    if (!job) return false;
+    const unitNumber = resolveIntakeUnitNumber(job, moiForm);
+    if (unitNumber != null) {
+      const unit = job.units?.find((u) => u.unitNumber === unitNumber);
+      if (unit?.awaitingIntakeApproval) return true;
+    }
+    if (job.awaitingIntakeApproval) return true;
+    if (job.units?.some((u) => u.awaitingIntakeApproval)) return true;
+    const workflowState = String(moiForm?.workflowState ?? job.moiWorkflowState ?? '');
+    return workflowState === 'PendingAdminIntake';
+  };
+
+  const handleApproveMoiIntake = async () => {
+    if (!selectedJobRequest) return;
+    try {
+      const unitNumber = resolveIntakeUnitNumber(selectedJobRequest, selectedMOIForm);
+      await approveMoiIntake(selectedJobRequest.id, unitNumber);
+      bumpRefresh();
+      await loadMOIForms();
+      showToast('MOI accepted — intake approved.');
+      setIsMOIFormOpen(false);
+      setIsMOIViewMode(false);
+      setSelectedMOIForm(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to accept MOI.');
+      throw err;
+    }
+  };
+
+  const handleRejectMoiIntake = async (reason: string) => {
+    if (!selectedJobRequest) return;
+    try {
+      const unitNumber = resolveIntakeUnitNumber(selectedJobRequest, selectedMOIForm);
+      await rejectMoiIntake(selectedJobRequest.id, reason, unitNumber);
+      bumpRefresh();
+      await loadMOIForms();
+      showToast('MOI rejected — sent back to client.');
+      setIsMOIFormOpen(false);
+      setIsMOIViewMode(false);
+      setSelectedMOIForm(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to reject MOI.');
+      throw err;
+    }
+  };
+
   const handleAcceptJob = async (jobId: number, assignedTo: string, comments: string) => {
     try {
       if (selectedJobRequest) {
@@ -1154,6 +1219,10 @@ export default function App() {
         onSubmitForApproval={handleSubmitMoiForApproval}
         onClientApprove={handleClientApproveMoi}
         onClientReject={userIsClientAdmin || userIsSignatory ? handleClientRejectMoi : undefined}
+        onApproveIntake={currentUser?.canApproveMoiIntake ? handleApproveMoiIntake : undefined}
+        onRejectIntake={currentUser?.canApproveMoiIntake ? handleRejectMoiIntake : undefined}
+        canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
+        awaitingIntakeApproval={isAwaitingMoiIntake(selectedJobRequest, selectedMOIForm)}
         onAdminOverride={userIsAdmin ? handleAdminOverrideMoi : undefined}
         isClientUser={userIsClientAdmin || userIsSignatory}
         isMoiApprovalTask={selectedJobRequest?.taskType === 'MOI Approval'}

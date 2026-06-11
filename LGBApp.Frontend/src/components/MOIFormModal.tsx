@@ -36,6 +36,10 @@ interface MOIFormModalProps {
   onSubmitForApproval?: (formId: number, formData?: Record<string, unknown>) => void;
   onClientApprove?: (formId: number, payload: { comments: string; signatureFileName?: string; signatureDataUrl?: string }) => void;
   onClientReject?: (formId: number, reason: string) => void;
+  onApproveIntake?: () => void | Promise<void>;
+  onRejectIntake?: (reason: string) => void | Promise<void>;
+  canApproveIntake?: boolean;
+  awaitingIntakeApproval?: boolean;
   currentUserName?: string;
   onAdminOverride?: (formId: number, comments: string) => void;
   userIsAdmin?: boolean;
@@ -52,7 +56,8 @@ interface MOIFormModalProps {
 }
 
 export function MOIFormModal({
-  isOpen, onClose, onSubmit, onSaveDraft, onConvertToMOA, onAccept, onRecommend, onSubmitForApproval, onClientApprove, onClientReject, onAdminOverride,
+  isOpen, onClose, onSubmit, onSaveDraft, onConvertToMOA, onAccept, onRecommend, onSubmitForApproval, onClientApprove, onClientReject,
+  onApproveIntake, onRejectIntake, canApproveIntake = false, awaitingIntakeApproval = false, onAdminOverride,
   userIsAdmin = false, isClientUser = false, isMoiApprovalTask = false,
   viewMode = false, initialData, jobId, jobStatus, users = [], customers, products, serviceUsage,
   currentUserName = '',
@@ -61,6 +66,8 @@ export function MOIFormModal({
   const [workflowState, setWorkflowState] = useState('Draft');
   const [recommendComments, setRecommendComments] = useState('');
   const [rejectReason, setRejectReason] = useState('');
+  const [intakeRejectReason, setIntakeRejectReason] = useState('');
+  const [intakeActionPending, setIntakeActionPending] = useState(false);
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [documentCount, setDocumentCount] = useState(0);
@@ -120,6 +127,13 @@ export function MOIFormModal({
   // Determine if this is a pending job
   const isPendingJob = viewMode && jobStatus === 'Pending';
   const isInProgressJob = viewMode && jobStatus === 'In Progress';
+  const showIntakeReview = Boolean(
+    viewMode
+    && canApproveIntake
+    && onApproveIntake
+    && onRejectIntake
+    && (awaitingIntakeApproval || workflowState === 'PendingAdminIntake'),
+  );
 
   const emptyFormData = {
     company: '',
@@ -403,6 +417,15 @@ export function MOIFormModal({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {showIntakeReview && (
+          <div className="px-6 py-4 border-b border-amber-200 bg-amber-50 text-amber-950">
+            <p className="font-semibold">MOI intake review</p>
+            <p className="text-sm mt-1 text-amber-900/80">
+              The client has submitted this MOI. Accept to approve intake and start internal preparation, or reject to send it back with a reason.
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
           <div className="p-6 space-y-6">
@@ -1045,50 +1068,111 @@ export function MOIFormModal({
                   Awaiting signature from: {pendingApprovers.join(', ')}
                 </p>
               )}
-              {userIsAdmin && viewMode && initialData?.id && workflowState !== 'Approved' && onAdminOverride && (
+              {userIsAdmin && viewMode && initialData?.id && workflowState !== 'Approved' && onAdminOverride && !showIntakeReview && (
                 <button
                   type="button"
                   onClick={() => onAdminOverride(initialData.id, 'Admin override')}
-                  className="px-4 py-2 border border-border rounded-lg text-sm"
+                  className="px-3 py-1.5 text-xs text-muted-foreground border border-border rounded-lg hover:bg-muted"
+                  title="Skip normal workflow and mark MOI approved (admin only)"
                 >
                   Admin override
                 </button>
               )}
             </div>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="px-6 py-2 border border-border rounded-lg hover:bg-muted transition-colors"
-              >
-                {viewMode ? 'Close' : 'Cancel'}
-              </button>
-              {!viewMode && (
-                <button
-                  type="submit"
-                  className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
-                >
-                  Save MOI
-                </button>
-              )}
-              {!viewMode && isClientUser && workflowState === 'Draft' && onSubmitForApproval && !isMoiApprovalTask && (
-                <button
-                  type="button"
-                  onClick={handleSubmitForApprovalClick}
-                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  Submit for approval
-                </button>
-              )}
-              {isPendingJob && (
-                <button
-                  type="button"
-                  onClick={handleAccept}
-                  disabled={!acceptanceData.assignedTo}
-                  className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Accept
-                </button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              {showIntakeReview ? (
+                <div className="flex-1 space-y-3 w-full">
+                  <label className="block text-sm font-medium">Rejection reason (required to reject)</label>
+                  <textarea
+                    rows={2}
+                    className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-input-background"
+                    placeholder="Explain what the client needs to fix…"
+                    value={intakeRejectReason}
+                    onChange={(e) => setIntakeRejectReason(e.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      disabled={intakeActionPending}
+                      onClick={() => {
+                        void (async () => {
+                          setIntakeActionPending(true);
+                          try {
+                            await onApproveIntake?.();
+                            handleClose();
+                          } finally {
+                            setIntakeActionPending(false);
+                          }
+                        })();
+                      }}
+                      className="px-6 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
+                    >
+                      Accept MOI
+                    </button>
+                    <button
+                      type="button"
+                      disabled={intakeActionPending || !intakeRejectReason.trim()}
+                      onClick={() => {
+                        void (async () => {
+                          setIntakeActionPending(true);
+                          try {
+                            await onRejectIntake?.(intakeRejectReason.trim());
+                            handleClose();
+                          } finally {
+                            setIntakeActionPending(false);
+                          }
+                        })();
+                      }}
+                      className="px-6 py-2.5 border-2 border-destructive text-destructive rounded-lg font-medium hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                    >
+                      Reject MOI
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClose}
+                      className="px-6 py-2.5 border border-border rounded-lg hover:bg-muted transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-3 ml-auto">
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    className="px-6 py-2 border border-border rounded-lg hover:bg-muted transition-colors"
+                  >
+                    {viewMode ? 'Close' : 'Cancel'}
+                  </button>
+                  {!viewMode && (
+                    <button
+                      type="submit"
+                      className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                    >
+                      Save MOI
+                    </button>
+                  )}
+                  {!viewMode && isClientUser && workflowState === 'Draft' && onSubmitForApproval && !isMoiApprovalTask && (
+                    <button
+                      type="button"
+                      onClick={handleSubmitForApprovalClick}
+                      className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                      Submit for approval
+                    </button>
+                  )}
+                  {isPendingJob && (
+                    <button
+                      type="button"
+                      onClick={handleAccept}
+                      disabled={!acceptanceData.assignedTo}
+                      className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Accept job
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
