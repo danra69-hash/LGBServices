@@ -3,6 +3,7 @@ namespace LGBApp.Backend.Services;
 public static class PackageItemStatuses
 {
     public const string MoiNotReceived = "moi_not_received";
+    public const string MoiRejected = "moi_rejected";
     public const string AwaitingIntake = "awaiting_intake";
     public const string ResolutionPrep = "resolution_prep";
     public const string PendingRecommendation = "pending_recommendation";
@@ -26,6 +27,7 @@ public static class PackageItemStatuses
     private static readonly Dictionary<string, string> Labels = new(StringComparer.OrdinalIgnoreCase)
     {
         [MoiNotReceived] = "MOI not received",
+        [MoiRejected] = "MOI rejected",
         [AwaitingIntake] = "With LGB for review",
         [ResolutionPrep] = "Resolution prep",
         [PendingRecommendation] = "Pending recommendation",
@@ -51,7 +53,7 @@ public static class PackageItemStatuses
         key is Completed or Approved;
 
     public static bool IsPendingBucket(string key) =>
-        key is MoiNotReceived or NotStarted or MoiNotComplete or AwaitingMoi;
+        key is MoiNotReceived or MoiRejected or NotStarted or MoiNotComplete or AwaitingMoi;
 
     public static bool IsInProgressBucket(string key) =>
         !IsCompletedBucket(key) && !IsPendingBucket(key) && key != Canceled;

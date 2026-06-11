@@ -8,7 +8,9 @@ public static class MoiVisibilityHelper
     public static bool IsClientOnlyPhase(MOIForm? form, JobRequest job)
     {
         if (form != null)
-            return form.WorkflowState is MoiWorkflowStates.Draft or MoiWorkflowStates.PendingClientMoiApproval;
+            return form.WorkflowState is MoiWorkflowStates.Draft
+                or MoiWorkflowStates.MoiRejected
+                or MoiWorkflowStates.PendingClientMoiApproval;
 
         return string.IsNullOrWhiteSpace(job.InternalHandoffStatus);
     }

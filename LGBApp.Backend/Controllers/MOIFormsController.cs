@@ -161,8 +161,8 @@ public class MOIFormsController : ControllerBase
             if (form.WorkflowState is "PendingRecommendation" or "Recommended" or "PendingMoiApproval")
                 form.WorkflowState = MoiWorkflowStates.Draft;
 
-            if (form.WorkflowState != MoiWorkflowStates.Draft)
-                return BadRequest("MOI can only be edited while in Draft.");
+            if (form.WorkflowState is not (MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected))
+                return BadRequest("MOI can only be edited while in Draft or after rejection.");
 
             if (form.JobRequestId.HasValue)
             {
@@ -249,8 +249,8 @@ public class MOIFormsController : ControllerBase
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 
-        if (form.WorkflowState != MoiWorkflowStates.Draft)
-            return BadRequest("MOI can only be submitted for approval from Draft.");
+        if (form.WorkflowState is not (MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected))
+            return BadRequest("MOI can only be submitted for approval from Draft or after rejection.");
 
         if (!form.JobRequestId.HasValue)
             return BadRequest("MOI must be linked to a job.");

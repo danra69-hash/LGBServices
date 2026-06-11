@@ -134,6 +134,16 @@ export function MOIFormModal({
     && onRejectIntake
     && (awaitingIntakeApproval || workflowState === 'PendingAdminIntake'),
   );
+  const isMoiRejectedState = workflowState === 'MoiRejected';
+  const hasRejectionHistory = (initialData?.rejections?.length ?? 0) > 0;
+  const showClientRejectionBanner = isClientUser && !viewMode
+    && (isMoiRejectedState || (hasRejectionHistory && workflowState === 'Draft'));
+  const latestRejection = initialData?.rejections?.length
+    ? initialData.rejections[initialData.rejections.length - 1]
+    : null;
+  const canClientResubmit = isClientUser
+    && (workflowState === 'Draft' || isMoiRejectedState)
+    && !isMoiApprovalTask;
 
   const emptyFormData = {
     company: '',
@@ -424,6 +434,21 @@ export function MOIFormModal({
             <p className="text-sm mt-1 text-amber-900/80">
               The client has submitted this MOI. Accept to approve intake and start internal preparation, or reject to send it back with a reason.
             </p>
+          </div>
+        )}
+
+        {showClientRejectionBanner && (
+          <div className="px-6 py-4 border-b border-red-200 bg-red-50 text-red-950">
+            <p className="font-semibold">MOI rejected</p>
+            <p className="text-sm mt-1 text-red-900/80">
+              Please update the form below and submit again when you are ready.
+            </p>
+            {latestRejection && (
+              <p className="text-sm mt-2 text-red-900">
+                <span className="font-medium">{latestRejection.userName}</span>
+                {latestRejection.rejectedAt ? ` (${latestRejection.rejectedAt})` : ''}: {latestRejection.reason}
+              </p>
+            )}
           </div>
         )}
 
@@ -1153,13 +1178,13 @@ export function MOIFormModal({
                       Save MOI
                     </button>
                   )}
-                  {!viewMode && isClientUser && workflowState === 'Draft' && onSubmitForApproval && !isMoiApprovalTask && (
+                  {!viewMode && canClientResubmit && onSubmitForApproval && (
                     <button
                       type="button"
                       onClick={handleSubmitForApprovalClick}
                       className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                     >
-                      Submit for approval
+                      {isMoiRejectedState || hasRejectionHistory ? 'Resubmit for approval' : 'Submit for approval'}
                     </button>
                   )}
                   {isPendingJob && (

@@ -877,7 +877,7 @@ export default function App() {
       await clientRejectMoiForm(formId, reason);
       await loadMOIForms();
       bumpRefresh();
-      showToast('MOI rejected — returned to draft for revision.');
+      showToast('MOI rejected — please revise and resubmit.');
       setIsMOIFormOpen(false);
       setSelectedMOIForm(null);
       setSelectedJobRequest(null);
@@ -1001,7 +1001,7 @@ export default function App() {
       await rejectMoiIntake(selectedJobRequest.id, reason, unitNumber);
       bumpRefresh();
       await loadMOIForms();
-      showToast('MOI rejected — sent back to client.');
+      showToast('MOI rejected — client can revise and resubmit.');
       setIsMOIFormOpen(false);
       setIsMOIViewMode(false);
       setSelectedMOIForm(null);

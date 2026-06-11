@@ -31,6 +31,7 @@ public static class MoiWorkflowStates
     public const string PendingPrep = "PendingPrep";
     public const string PendingRecommendation = "PendingRecommendation";
     public const string Approved = "Approved";
+    public const string MoiRejected = "MoiRejected";
 }
 
 public static class JobHandoffService
@@ -292,7 +293,7 @@ public static class JobHandoffService
         User user,
         string reason)
     {
-        form.WorkflowState = MoiWorkflowStates.Draft;
+        form.WorkflowState = MoiWorkflowStates.MoiRejected;
         form.ClientApprovalsJson = "[]";
         form.UpdatedAt = DateTime.UtcNow;
         FormRejectionService.AddMoiRejection(form, new FormRejectionRecord
@@ -324,7 +325,7 @@ public static class JobHandoffService
         User user,
         string reason)
     {
-        form.WorkflowState = MoiWorkflowStates.Draft;
+        form.WorkflowState = MoiWorkflowStates.MoiRejected;
         form.UpdatedAt = DateTime.UtcNow;
         FormRejectionService.AddMoiRejection(form, new FormRejectionRecord
         {

@@ -2,6 +2,7 @@ import type { JobRequestResponse, JobRequestUnitDto } from '@/lib/api';
 
 export const PACKAGE_ITEM_STATUS_KEYS = {
   moiNotReceived: 'moi_not_received',
+  moiRejected: 'moi_rejected',
   awaitingIntake: 'awaiting_intake',
   resolutionPrep: 'resolution_prep',
   pendingRecommendation: 'pending_recommendation',
@@ -22,6 +23,7 @@ export const PACKAGE_ITEM_STATUS_KEYS = {
 
 const LABELS: Record<string, string> = {
   [PACKAGE_ITEM_STATUS_KEYS.moiNotReceived]: 'MOI not received',
+  [PACKAGE_ITEM_STATUS_KEYS.moiRejected]: 'MOI rejected',
   [PACKAGE_ITEM_STATUS_KEYS.awaitingIntake]: 'With LGB for review',
   [PACKAGE_ITEM_STATUS_KEYS.resolutionPrep]: 'Resolution prep',
   [PACKAGE_ITEM_STATUS_KEYS.pendingRecommendation]: 'Pending recommendation',
@@ -42,6 +44,7 @@ const LABELS: Record<string, string> = {
 
 const BADGE_CLASSES: Record<string, string> = {
   [PACKAGE_ITEM_STATUS_KEYS.moiNotReceived]: 'bg-slate-100 text-slate-700',
+  [PACKAGE_ITEM_STATUS_KEYS.moiRejected]: 'bg-red-100 text-red-800',
   [PACKAGE_ITEM_STATUS_KEYS.awaitingIntake]: 'bg-amber-100 text-amber-900',
   [PACKAGE_ITEM_STATUS_KEYS.resolutionPrep]: 'bg-blue-100 text-blue-800',
   [PACKAGE_ITEM_STATUS_KEYS.pendingRecommendation]: 'bg-indigo-100 text-indigo-800',
@@ -62,6 +65,7 @@ const BADGE_CLASSES: Record<string, string> = {
 
 export const MOI_WORKFLOW_STATE_LABELS: Record<string, string> = {
   Draft: 'MOI not received',
+  MoiRejected: 'MOI rejected',
   PendingClientMoiApproval: 'Pending client approval',
   PendingAdminIntake: 'With LGB for review',
   PendingPrep: 'Resolution prep',
@@ -168,14 +172,30 @@ export function displayStatusKeyForUnit(job: JobRequestResponse, unit: JobReques
   return resolveUnitDisplayStatus(job, unit).key;
 }
 
+export function isMoiRejected(
+  job: JobRequestResponse,
+  unit?: JobRequestUnitDto,
+): boolean {
+  if (unit) {
+    if (unit.moiWorkflowState === 'MoiRejected') return true;
+    return displayStatusKeyForUnit(job, unit) === PACKAGE_ITEM_STATUS_KEYS.moiRejected;
+  }
+  if (job.moiWorkflowState === 'MoiRejected') return true;
+  return displayStatusKey(job) === PACKAGE_ITEM_STATUS_KEYS.moiRejected;
+}
+
 export function canClientStartMoi(job: JobRequestResponse, unit?: JobRequestUnitDto): boolean {
   if (job.taskType !== 'Service' && job.taskType !== 'MOI')
+    return false;
+  if (isMoiRejected(job, unit))
     return false;
   if (unit && (job.totalQty ?? 1) > 1) {
     return !unitHasMoiForm(job, unit) && !unit.linkedFormId;
   }
+  if (unitHasMoiForm(job, unit) || job.linkedFormId)
+    return false;
   const key = displayStatusKey(job);
-  return key === PACKAGE_ITEM_STATUS_KEYS.moiNotReceived || !job.linkedFormId;
+  return key === PACKAGE_ITEM_STATUS_KEYS.moiNotReceived;
 }
 
 export function signatoryCanSignMoi(
@@ -209,7 +229,7 @@ export function canSignatoryStartMoi(
   return holder.localeCompare(user.name.trim(), undefined, { sensitivity: 'accent' }) === 0;
 }
 
-/** Client may edit MOI while still in Draft (before Submit for approval). */
+/** Client may edit MOI in Draft or after LGB/client rejection (MoiRejected). */
 export function canClientEditMoiDraft(
   job: JobRequestResponse,
   options: {
@@ -225,7 +245,7 @@ export function canClientEditMoiDraft(
     return false;
 
   const state = options.workflowState ?? job.moiWorkflowState ?? 'Draft';
-  if (state !== 'Draft')
+  if (state !== 'Draft' && state !== 'MoiRejected')
     return false;
 
   if (options.isClientAdmin)

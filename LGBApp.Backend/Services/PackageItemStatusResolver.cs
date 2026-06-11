@@ -71,7 +71,7 @@ public static class PackageItemStatusResolver
 
         if (form != null)
         {
-            var fromForm = ResolveMoiFromWorkflowState(form.WorkflowState, handoff);
+            var fromForm = ResolveMoiFromWorkflowState(form.WorkflowState, handoff, form);
             if (fromForm.HasValue)
                 return fromForm.Value;
         }
@@ -97,8 +97,17 @@ public static class PackageItemStatusResolver
         return Result(PackageItemStatuses.ResolutionPrep);
     }
 
-    private static PackageItemStatusResult? ResolveMoiFromWorkflowState(string workflowState, string handoff)
+    private static PackageItemStatusResult? ResolveMoiFromWorkflowState(
+        string workflowState,
+        string handoff,
+        MOIForm? form = null)
     {
+        if (workflowState == MoiWorkflowStates.MoiRejected
+            || (workflowState == MoiWorkflowStates.Draft
+                && form != null
+                && FormRejectionService.ParseMoi(form).Count > 0))
+            return Result(PackageItemStatuses.MoiRejected);
+
         return workflowState switch
         {
             MoiWorkflowStates.Approved => Result(PackageItemStatuses.MoiApproved),

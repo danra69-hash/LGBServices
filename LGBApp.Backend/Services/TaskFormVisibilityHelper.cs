@@ -144,12 +144,12 @@ public static class TaskFormVisibilityHelper
                 return false;
 
             return AuthHelper.IsSignatoryForJob(user, job)
-                && workflowState is MoiWorkflowStates.Draft;
+                && workflowState is MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected;
         }
 
         if (AuthHelper.IsClientAdmin(user))
             return AuthHelper.CanAccessCustomer(user, job.CustomerId)
-                && workflowState is MoiWorkflowStates.Draft;
+                && workflowState is MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected;
 
         if (AuthHelper.IsAdmin(user))
             return workflowState != MoiWorkflowStates.Approved;

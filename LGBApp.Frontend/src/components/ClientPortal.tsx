@@ -20,6 +20,7 @@ import {
 } from '@/lib/api';
 import {
   canClientStartMoi,
+  isMoiRejected,
   canSignatoryStartMoi,
   signatoryCanSignMoi,
   canOpenMoaForm,
@@ -188,6 +189,8 @@ export function ClientPortal({ currentUser, onOpenForm, refreshKey = 0, mode = '
 
   const formActionLabel = (job: JobRequestResponse, unit: JobRequestUnitDto) => {
     const ctx = jobForUnit(job, unit);
+    if (isMoiRejected(job, unit))
+      return 'Revise MOI';
     if (isSignatoryView && signatoryCanSignMoi(job, currentUser, unit))
       return 'Sign MOI';
     if (canClientStartMoi(job, unit) && (!isSignatoryView || canSignatoryStartMoi(job, currentUser)))
@@ -302,6 +305,11 @@ export function ClientPortal({ currentUser, onOpenForm, refreshKey = 0, mode = '
 
       if (!canOpenMoiForm(job)) return;
 
+      if (ctx.linkedFormId || unitHasMoiForm(job, unit) || isMoiRejected(job, unit)) {
+        onOpenForm(ctx);
+        return;
+      }
+
       if (canClientStartMoi(job, unit)) {
         const updated = await issueMoiForJob(job.id, {
           service: job.service,
@@ -312,11 +320,6 @@ export function ClientPortal({ currentUser, onOpenForm, refreshKey = 0, mode = '
         await load();
         const refreshedUnit = updated.units?.find((u) => u.unitNumber === unit.unitNumber) ?? unit;
         onOpenForm(jobForUnit(updated, refreshedUnit));
-        return;
-      }
-
-      if (ctx.linkedFormId) {
-        onOpenForm(ctx);
         return;
       }
 
