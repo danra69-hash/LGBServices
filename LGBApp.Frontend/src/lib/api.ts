@@ -969,6 +969,7 @@ export async function getMOIForm(id: number): Promise<FormResponse> {
 
 export async function createMOIForm(data: {
   jobId?: number;
+  unitNumber?: number;
   company: string;
   formTemplateCode?: string;
   financeRelated?: boolean;
@@ -983,6 +984,7 @@ export async function createMOIForm(data: {
 
 export async function updateMOIForm(id: number, data: {
   jobId?: number;
+  unitNumber?: number;
   company: string;
   formTemplateCode?: string;
   financeRelated?: boolean;

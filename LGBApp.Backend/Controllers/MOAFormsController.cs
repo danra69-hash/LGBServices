@@ -67,12 +67,43 @@ public class MOAFormsController : ControllerBase
         var templateCode = request.FormTemplateCode
             ?? WorkflowService.ResolveMoaTemplateCode(customer, group);
 
+        MOIForm? linkedMoi = null;
+        if (request.MoiFormId.HasValue)
+            linkedMoi = await _context.MOIForms.FindAsync(request.MoiFormId.Value);
+
+        if (linkedMoi != null && request.JobId.HasValue)
+        {
+            var duplicate = await _context.MOAForms.FirstOrDefaultAsync(f =>
+                f.JobRequestId == request.JobId
+                && f.JobRequestUnitId == linkedMoi.JobRequestUnitId
+                && (linkedMoi.JobRequestUnitId != null || f.MOIFormId == linkedMoi.MOIFormId));
+            if (duplicate != null)
+                return Ok(FormMapper.ToMoaResponse(duplicate, null, customer));
+        }
+
+        var moaData = new Dictionary<string, object?>(request.Data);
+        if (linkedMoi != null)
+        {
+            moaData["moiFormId"] = linkedMoi.MOIFormId;
+            if (linkedMoi.JobRequestUnitId.HasValue
+                && !moaData.ContainsKey("unitNumber"))
+            {
+                var unitNum = await _context.JobRequestUnits
+                    .Where(u => u.JobRequestUnitId == linkedMoi.JobRequestUnitId)
+                    .Select(u => u.UnitNumber)
+                    .FirstOrDefaultAsync();
+                if (unitNum > 0)
+                    moaData["unitNumber"] = unitNum;
+            }
+        }
+
         var form = new MOAForm
         {
             JobRequestId = request.JobId,
+            JobRequestUnitId = linkedMoi?.JobRequestUnitId,
             MOIFormId = request.MoiFormId,
             Company = request.Company,
-            FormDataJson = JsonHelper.Serialize(request.Data),
+            FormDataJson = JsonHelper.Serialize(moaData),
             FormTemplateCode = templateCode,
             FinanceRelated = request.FinanceRelated,
             BankSignatoryMatter = request.BankSignatoryMatter,
@@ -81,14 +112,10 @@ public class MOAFormsController : ControllerBase
             UpdatedAt = DateTime.UtcNow,
         };
 
-        if (request.MoiFormId.HasValue)
+        if (linkedMoi != null)
         {
-            var moi = await _context.MOIForms.FindAsync(request.MoiFormId.Value);
-            if (moi != null)
-            {
-                form.FinanceRelated = moi.FinanceRelated;
-                form.BankSignatoryMatter = moi.BankSignatoryMatter;
-            }
+            form.FinanceRelated = linkedMoi.FinanceRelated;
+            form.BankSignatoryMatter = linkedMoi.BankSignatoryMatter;
         }
 
         _context.MOAForms.Add(form);

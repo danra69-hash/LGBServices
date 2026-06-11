@@ -12,6 +12,7 @@ interface JobItemDocumentsSectionProps {
   unitNumber?: number;
   title?: string;
   folders?: Array<'moi' | 'supporting' | 'moa'>;
+  refreshKey?: number;
 }
 
 async function openDocument(jobId: number, doc: JobItemDocumentDto) {
@@ -37,6 +38,7 @@ export function JobItemDocumentsSection({
   unitNumber,
   title = 'Attached documents',
   folders = ['moi', 'supporting'],
+  refreshKey = 0,
 }: JobItemDocumentsSectionProps) {
   const [documents, setDocuments] = useState<JobItemDocumentDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,7 +63,7 @@ export function JobItemDocumentsSection({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshKey]);
 
   if (loading) {
     return <p className="text-xs text-muted-foreground py-2">Loading documents…</p>;

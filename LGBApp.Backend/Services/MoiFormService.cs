@@ -1,5 +1,6 @@
 using LGBApp.Backend.Data;
 using LGBApp.Backend.Models;
+using LGBApp.Backend.Models.DTOs;
 using Microsoft.EntityFrameworkCore;
 
 namespace LGBApp.Backend.Services;
@@ -97,5 +98,35 @@ public static class MoiFormService
         return job.TotalQty == 1
             ? job.Units.OrderBy(u => u.UnitNumber).FirstOrDefault()
             : null;
+    }
+
+    public static int? ResolveUnitNumber(FormRequest request)
+    {
+        if (request.UnitNumber.HasValue)
+            return request.UnitNumber;
+
+        if (request.Data.TryGetValue("unitNumber", out var raw) && raw != null)
+        {
+            if (raw is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                return je.GetInt32();
+            if (int.TryParse(raw.ToString(), out var parsed))
+                return parsed;
+        }
+
+        return null;
+    }
+
+    public static void StampUnitMetadata(
+        Dictionary<string, object?> formData,
+        JobRequest job,
+        JobRequestUnit? unit)
+    {
+        if (unit == null)
+            return;
+
+        formData["unitNumber"] = unit.UnitNumber;
+        formData["sessionLabel"] = job.TotalQty > 1 ? $"session {unit.UnitNumber}" : string.Empty;
+        formData["service"] = formData.GetValueOrDefault("service") ?? job.Service;
+        formData["typeOfDocument"] = formData.GetValueOrDefault("typeOfDocument") ?? job.Service;
     }
 }

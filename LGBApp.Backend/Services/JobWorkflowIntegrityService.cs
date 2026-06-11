@@ -73,6 +73,42 @@ public static class JobWorkflowIntegrityService
             AttachMoiToUnit(orphan, target);
             MigrateUnitHandoffFromJob(job, target, orphan);
         }
+
+        if (orphans.Count == 1 && unitsWithoutMoi.Count > 0)
+        {
+            foreach (var target in unitsWithoutMoi.ToList())
+                await CloneMoiForUnitAsync(context, job, orphans[0], target);
+        }
+    }
+
+    private static async Task CloneMoiForUnitAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOIForm source,
+        JobRequestUnit target)
+    {
+        var clone = new MOIForm
+        {
+            JobRequestId = job.JobRequestId,
+            JobRequestUnitId = target.JobRequestUnitId,
+            Company = source.Company,
+            FormTemplateCode = source.FormTemplateCode,
+            WorkflowState = MoiWorkflowStates.Draft,
+            FinanceRelated = source.FinanceRelated,
+            BankSignatoryMatter = source.BankSignatoryMatter,
+            ClientApprovalsJson = "[]",
+            RejectionsJson = "[]",
+            FormDataJson = "{}",
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        AttachMoiToUnit(clone, target);
+        var data = JsonHelper.Deserialize<Dictionary<string, object?>>(source.FormDataJson);
+        data["company"] = source.Company;
+        data["service"] = job.Service;
+        clone.FormDataJson = JsonHelper.Serialize(data);
+        context.MOIForms.Add(clone);
+        await context.SaveChangesAsync();
     }
 
     private static async Task RepairOrphanMoasAsync(

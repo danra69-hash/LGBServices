@@ -506,13 +506,19 @@ export default function App() {
     try {
       const jobId = selectedJobRequest?.id ?? (data.jobId as number | undefined);
       const unitNumber = selectedJobRequest?.activeUnitNumber
-        ?? (data.unitNumber as number | undefined);
+        ?? (data.unitNumber as number | undefined)
+        ?? (data.activeUnitNumber as number | undefined);
       const pendingFiles = Array.isArray(data.attachedFiles)
         ? data.attachedFiles.filter((f): f is File => f instanceof File)
         : [];
       const { attachedFiles: _omit, ...formFields } = data;
+      if (unitNumber != null) {
+        formFields.unitNumber = unitNumber;
+        formFields.activeUnitNumber = unitNumber;
+      }
       const payload = {
         jobId,
+        unitNumber,
         company: String(data.company ?? ''),
         formTemplateCode: data.formTemplateCode as string | undefined,
         financeRelated: Boolean(data.financeRelated),
@@ -597,12 +603,17 @@ export default function App() {
 
   const openMoiFormForJob = async (job: JobRequestResponse, viewMode = true) => {
     setSelectedJobRequest(job);
-    let moiForm = submittedMOIForms.find((f) => f.id === job.linkedFormId || f.jobId === job.id);
+    const unitNumber = job.activeUnitNumber ?? ((job.totalQty ?? 1) > 1 ? undefined : 1);
+    let moiForm = submittedMOIForms.find((f) =>
+      f.id === job.linkedFormId
+      || (f.jobId === job.id && (unitNumber == null || f.unitNumber === unitNumber || f.activeUnitNumber === unitNumber)));
     if (!moiForm) {
       try {
         const f = job.linkedFormId
           ? await getMOIForm(job.linkedFormId)
-          : (await getMOIForms(job.id, job.activeUnitNumber))[0];
+          : unitNumber != null
+            ? (await getMOIForms(job.id, unitNumber))[0]
+            : undefined;
         if (f) {
           moiForm = {
             ...f.data,
@@ -674,7 +685,7 @@ export default function App() {
 
   const handleOpenFormTask = (job: JobRequestResponse, unit?: JobRequestUnitDto) => {
     const scoped = jobForUnit(job, unit);
-    if (canOpenMoaForJob(scoped)) {
+    if (canOpenMoaForJob(scoped, unit)) {
       void openMoaFormForJob(scoped);
       return;
     }

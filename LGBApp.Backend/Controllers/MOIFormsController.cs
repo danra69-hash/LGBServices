@@ -76,12 +76,34 @@ public class MOIFormsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<FormResponse>> CreateForm(FormRequest request)
     {
+        JobRequest? job = null;
+        JobRequestUnit? unit = null;
+
         if (request.JobId.HasValue)
         {
-            var job = await _context.JobRequests.FindAsync(request.JobId.Value);
+            job = await _context.JobRequests
+                .Include(j => j.Units)
+                .FirstOrDefaultAsync(j => j.JobRequestId == request.JobId.Value);
             if (job == null) return NotFound();
             if (AuthHelper.IsExternalUser(User) && !AuthHelper.CanManageClientJob(User, job) && !AuthHelper.IsSignatoryForJob(User, job))
                 return Forbid();
+
+            await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
+            await _context.Entry(job).Collection(j => j.Units).LoadAsync();
+
+            var unitNumber = MoiFormService.ResolveUnitNumber(request);
+            unit = MoiFormService.ResolveUnit(job, unitNumber ?? (job.TotalQty <= 1 ? 1 : null));
+            if (job.TotalQty > 1 && unit == null)
+                return BadRequest(new { message = "unitNumber is required — each session needs its own MOI." });
+
+            var existing = await MoiFormService.FindForUnitAsync(
+                _context, job.JobRequestId, unit?.JobRequestUnitId, job.TotalQty <= 1);
+            if (existing != null)
+            {
+                await ApplyFormRequestAsync(existing, request, job, unit);
+                var linkedCustomer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, existing.Company);
+                return Ok(FormMapper.ToMoiResponse(existing, customer: linkedCustomer));
+            }
         }
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, request.Company);
@@ -92,9 +114,12 @@ public class MOIFormsController : ControllerBase
         var formData = new Dictionary<string, object?>(request.Data);
         if (request.JobId.HasValue)
             formData["jobId"] = request.JobId.Value;
+        if (job != null)
+            MoiFormService.StampUnitMetadata(formData, job, unit);
 
         var serviceName = request.Data.GetValueOrDefault("service")?.ToString()
-            ?? request.Data.GetValueOrDefault("typeOfDocument")?.ToString();
+            ?? request.Data.GetValueOrDefault("typeOfDocument")?.ToString()
+            ?? job?.Service;
         var templateCode = request.FormTemplateCode
             ?? await WorkflowService.ResolveMoiTemplateCodeAsync(_context, customer, group, serviceName);
 
@@ -105,6 +130,7 @@ public class MOIFormsController : ControllerBase
         var form = new MOIForm
         {
             JobRequestId = request.JobId,
+            JobRequestUnitId = unit?.JobRequestUnitId,
             Company = request.Company,
             FormDataJson = JsonHelper.Serialize(formData),
             FormTemplateCode = templateCode,
@@ -118,7 +144,7 @@ public class MOIFormsController : ControllerBase
         _context.MOIForms.Add(form);
         await _context.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetForm), new { id = form.MOIFormId }, FormMapper.ToMoiResponse(form));
+        return CreatedAtAction(nameof(GetForm), new { id = form.MOIFormId }, FormMapper.ToMoiResponse(form, customer: customer));
     }
 
     [HttpPut("{id}")]
@@ -153,11 +179,39 @@ public class MOIFormsController : ControllerBase
             }
         }
 
+        var job = form.JobRequestId.HasValue
+            ? await _context.JobRequests.Include(j => j.Units).FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId)
+            : null;
+        JobRequestUnit? unit = null;
+        if (job != null)
+        {
+            var unitNumber = MoiFormService.ResolveUnitNumber(request);
+            unit = form.JobRequestUnitId.HasValue
+                ? job.Units.FirstOrDefault(u => u.JobRequestUnitId == form.JobRequestUnitId)
+                : MoiFormService.ResolveUnit(job, unitNumber ?? (job.TotalQty <= 1 ? 1 : null));
+            if (unit != null && !form.JobRequestUnitId.HasValue)
+                form.JobRequestUnitId = unit.JobRequestUnitId;
+        }
+
+        await ApplyFormRequestAsync(form, request, job, unit);
+        return NoContent();
+    }
+
+    private async Task ApplyFormRequestAsync(
+        MOIForm form,
+        FormRequest request,
+        JobRequest? job,
+        JobRequestUnit? unit)
+    {
         var formData = new Dictionary<string, object?>(request.Data);
         if (request.JobId.HasValue)
             formData["jobId"] = request.JobId.Value;
+        if (job != null)
+            MoiFormService.StampUnitMetadata(formData, job, unit);
 
         form.JobRequestId = request.JobId ?? form.JobRequestId;
+        if (unit != null)
+            form.JobRequestUnitId = unit.JobRequestUnitId;
         form.Company = request.Company;
         form.FormDataJson = JsonHelper.Serialize(formData);
         form.FinanceRelated = request.FinanceRelated;
@@ -167,24 +221,23 @@ public class MOIFormsController : ControllerBase
 
         if (form.WorkflowState == MoiWorkflowStates.PendingPrep
             && AuthHelper.IsInternalStaff(User)
-            && form.JobRequestId.HasValue)
-        {
-            var linkedJob = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
-            if (linkedJob != null && !TaskFormVisibilityHelper.AwaitingIntakeApproval(linkedJob))
-                form.WorkflowState = MoiWorkflowStates.PendingRecommendation;
-        }
+            && form.JobRequestId.HasValue
+            && job != null
+            && !TaskFormVisibilityHelper.AwaitingIntakeApproval(job, form))
+            form.WorkflowState = MoiWorkflowStates.PendingRecommendation;
 
         form.UpdatedAt = DateTime.UtcNow;
 
-        if (form.JobRequestId.HasValue)
+        if (job != null)
         {
-            var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
-            if (job != null && job.InternalHandoffStatus == JobHandoffStatuses.ClientSubmitted)
+            if (unit != null && job.TotalQty > 1
+                && unit.InternalHandoffStatus == JobHandoffStatuses.ClientSubmitted)
+                unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+            else if (job.InternalHandoffStatus == JobHandoffStatuses.ClientSubmitted)
                 JobHandoffService.SetHandoff(job, JobHandoffStatuses.PendingPrep);
         }
 
         await _context.SaveChangesAsync();
-        return NoContent();
     }
 
     [HttpPost("{id}/submit-for-approval")]

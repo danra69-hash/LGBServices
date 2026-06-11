@@ -240,13 +240,22 @@ export function canOpenMoaForm(job: JobRequestResponse): boolean {
 }
 
 /** Service-line jobs in the MOA preparation / circulation phase (internal staff). */
-export function canOpenMoaForJob(job: JobRequestResponse): boolean {
-  if (canOpenMoaForm(job) || jobHasMoaForm(job) || job.linkedFormKind === 'MOA')
+export function canOpenMoaForJob(job: JobRequestResponse, unit?: JobRequestUnitDto): boolean {
+  const scoped = unit && (job.totalQty ?? 1) > 1
+    ? {
+        ...job,
+        linkedFormId: unit.linkedFormId ?? job.linkedFormId,
+        linkedFormKind: unit.linkedFormKind ?? job.linkedFormKind,
+        hasMoaForm: unit.hasMoaForm ?? job.hasMoaForm,
+        internalHandoffStatus: unit.internalHandoffStatus ?? job.internalHandoffStatus,
+      }
+    : job;
+  if (canOpenMoaForm(scoped) || jobHasMoaForm(scoped) || scoped.linkedFormKind === 'MOA')
     return true;
-  if (job.taskType !== 'Service')
+  if (scoped.taskType !== 'Service')
     return false;
-  const handoff = job.internalHandoffStatus ?? '';
-  const key = displayStatusKey(job);
+  const handoff = scoped.internalHandoffStatus ?? '';
+  const key = unit ? displayStatusKeyForUnit(job, unit) : displayStatusKey(job);
   return handoff === 'AdminReview'
     || handoff === 'MoaSharonApproved'
     || handoff === 'ReadyForMoa'

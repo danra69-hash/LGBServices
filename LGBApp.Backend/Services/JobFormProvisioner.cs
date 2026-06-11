@@ -11,6 +11,58 @@ public static class JobFormProvisioner
     public static Task EnsureMoaFormAsync(AppDbContext context, JobRequest job) =>
         EnsureMoaFormCoreAsync(context, job);
 
+    public static async Task EnsureMoaFormForMoiAsync(AppDbContext context, JobRequest job, MOIForm moiForm)
+    {
+        var exists = await context.MOAForms.AnyAsync(f =>
+            f.MOIFormId == moiForm.MOIFormId
+            || (f.JobRequestId == job.JobRequestId
+                && f.JobRequestUnitId == moiForm.JobRequestUnitId
+                && moiForm.JobRequestUnitId != null));
+        if (exists)
+            return;
+
+        Customer? customer = job.CustomerId.HasValue
+            ? await context.Customers.FindAsync(job.CustomerId.Value)
+            : null;
+        DivisionGroup? group = null;
+        if (customer != null && !string.IsNullOrWhiteSpace(customer.DivisionGroupCode))
+            group = await context.DivisionGroups.FirstOrDefaultAsync(g => g.Code == customer.DivisionGroupCode);
+
+        var templateCode = WorkflowService.ResolveMoaTemplateCode(customer, group);
+        var now = DateTime.UtcNow;
+        var sessionLabel = job.TotalQty > 1 && moiForm.JobRequestUnitId.HasValue
+            ? await context.JobRequestUnits
+                .Where(u => u.JobRequestUnitId == moiForm.JobRequestUnitId)
+                .Select(u => u.UnitNumber)
+                .FirstOrDefaultAsync()
+            : 0;
+
+        context.MOAForms.Add(new MOAForm
+        {
+            JobRequestId = job.JobRequestId,
+            JobRequestUnitId = moiForm.JobRequestUnitId,
+            MOIFormId = moiForm.MOIFormId,
+            Company = job.Customer,
+            FormTemplateCode = templateCode,
+            FinanceRelated = moiForm.FinanceRelated,
+            BankSignatoryMatter = moiForm.BankSignatoryMatter,
+            FormDataJson = JsonHelper.Serialize(new Dictionary<string, object?>
+            {
+                ["company"] = job.Customer,
+                ["taskType"] = job.TaskType,
+                ["service"] = job.Service,
+                ["accountHolder"] = job.AccountHolder,
+                ["projectInitiator"] = job.AccountHolder,
+                ["unitNumber"] = sessionLabel > 0 ? sessionLabel : null,
+                ["sessionLabel"] = sessionLabel > 0 ? $"session {sessionLabel}" : string.Empty,
+                ["moiFormId"] = moiForm.MOIFormId,
+            }),
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        await context.SaveChangesAsync();
+    }
+
     public static async Task EnsureFormForJobAsync(AppDbContext context, JobRequest job)
     {
         if (job.JobRequestId == 0)

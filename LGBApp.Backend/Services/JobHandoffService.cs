@@ -197,15 +197,25 @@ public static class JobHandoffService
     {
         if (!form.JobRequestId.HasValue) return;
 
-        var job = await context.JobRequests.FindAsync(form.JobRequestId.Value);
+        var job = await context.JobRequests
+            .Include(j => j.Units)
+            .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId.Value);
         if (job == null) return;
 
         form.WorkflowState = MoiWorkflowStates.Approved;
         form.UpdatedAt = DateTime.UtcNow;
-        SetHandoff(job, JobHandoffStatuses.AdminReview);
         job.Status = "In Progress";
 
-        await JobFormProvisioner.EnsureMoaFormAsync(context, job);
+        if (form.JobRequestUnitId.HasValue && job.TotalQty > 1)
+        {
+            var unit = job.Units.FirstOrDefault(u => u.JobRequestUnitId == form.JobRequestUnitId.Value);
+            if (unit != null)
+                unit.InternalHandoffStatus = JobHandoffStatuses.AdminReview;
+        }
+        else
+            SetHandoff(job, JobHandoffStatuses.AdminReview);
+
+        await JobFormProvisioner.EnsureMoaFormForMoiAsync(context, job, form);
         await context.SaveChangesAsync();
     }
 

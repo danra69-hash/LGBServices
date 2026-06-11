@@ -1,7 +1,7 @@
 import { X, Upload, Paperclip, ArrowRight } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { JobItemDocumentsSection } from './JobItemDocumentsSection';
-import { resolveFormTemplate, type FormTemplateDto } from '@/lib/api';
+import { ApiError, resolveFormTemplate, uploadJobItemDocument, type FormTemplateDto } from '@/lib/api';
 import { moiWorkflowStateLabel } from '@/lib/packageItemStatus';
 
 interface Customer {
@@ -61,6 +61,9 @@ export function MOIFormModal({
   const [recommendComments, setRecommendComments] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
+  const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const pendingApprovers: string[] = initialData?.pendingApprovers ?? [];
   const requiredApprovers: string[] = initialData?.requiredApprovers ?? [];
   const clientApprovals: { accountHolderName?: string }[] = initialData?.clientApprovals ?? [];
@@ -243,11 +246,36 @@ export function MOIFormModal({
   const requestedPerson = selectedCompany?.accountHolders.find(h => h.name === formData.requestedBy);
   const requiresApproval = formData.requestedBy !== '' && !requestedPerson?.moi;
 
+  const resolvedJobId = jobId ?? initialData?.jobId;
+  const resolvedUnitNumber = initialData?.unitNumber ?? initialData?.activeUnitNumber;
+  const itemLabel = resolvedUnitNumber ? ` (session #${resolvedUnitNumber})` : '';
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const filesArray = Array.from(e.target.files);
+    const filesArray = Array.from(e.target.files ?? []);
+    if (filesArray.length === 0) return;
+
+    if (!resolvedJobId) {
       setFormData({ ...formData, attachedFiles: [...formData.attachedFiles, ...filesArray] });
+      setUploadError('Save the MOI once so attachments can be stored for this session.');
+      return;
     }
+
+    setUploadingFile(true);
+    setUploadError('');
+    const folder = formData.supportingDocument ? 'supporting' : 'moi';
+    void (async () => {
+      try {
+        for (const file of filesArray) {
+          await uploadJobItemDocument(resolvedJobId, folder, file, resolvedUnitNumber);
+        }
+        setDocumentsRefreshKey((k) => k + 1);
+      } catch (err) {
+        setUploadError(err instanceof ApiError ? err.message : 'Failed to upload file.');
+      } finally {
+        setUploadingFile(false);
+      }
+    })();
+    e.target.value = '';
   };
 
   const removeFile = (index: number) => {
@@ -281,7 +309,9 @@ export function MOIFormModal({
     void Promise.resolve(onSubmit({
       ...formData,
       id: initialData?.id,
-      jobId: jobId ?? initialData?.jobId,
+      jobId: resolvedJobId,
+      unitNumber: resolvedUnitNumber,
+      activeUnitNumber: resolvedUnitNumber,
       workflowState,
     }));
   };
@@ -369,6 +399,12 @@ export function MOIFormModal({
                   <span className="font-medium">{formTemplate.issuerEntity}</span>
                 </div>
               )}
+              {resolvedUnitNumber && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Session:</span>
+                  <span className="font-medium">#{resolvedUnitNumber}</span>
+                </div>
+              )}
               {workflowState && (
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-sm text-muted-foreground">Workflow:</span>
@@ -379,10 +415,11 @@ export function MOIFormModal({
               )}
             </div>
 
-            {(jobId ?? initialData?.jobId) && (
+            {resolvedJobId && (
               <JobItemDocumentsSection
-                jobId={Number(jobId ?? initialData?.jobId)}
-                unitNumber={initialData?.unitNumber ?? initialData?.activeUnitNumber}
+                jobId={Number(resolvedJobId)}
+                unitNumber={resolvedUnitNumber}
+                refreshKey={documentsRefreshKey}
                 title={viewMode ? 'Documents for review' : 'Uploaded documents'}
               />
             )}
@@ -487,40 +524,24 @@ export function MOIFormModal({
                 </label>
 
                 {formData.supportingDocument && (
-                  <div className="mt-3">
-                    <label className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors cursor-pointer inline-flex">
-                      <Paperclip className="w-4 h-4" />
-                      <span>Attach Files</span>
-                      <input
-                        type="file"
-                        multiple
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                    </label>
-
-                    {formData.attachedFiles.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {formData.attachedFiles.map((file, index) => (
-                          <div key={index} className="flex items-center justify-between bg-muted/30 rounded px-3 py-2">
-                            <div className="flex items-center gap-2">
-                              <Upload className="w-4 h-4 text-muted-foreground" />
-                              <span className="text-sm">{file.name}</span>
-                              <span className="text-xs text-muted-foreground">
-                                ({(file.size / 1024).toFixed(2)} KB)
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => removeFile(index)}
-                              className="text-destructive hover:text-destructive/80 text-sm"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Files upload immediately and are stored for this session{itemLabel}.
+                    </p>
+                    {!viewMode && (
+                      <label className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors cursor-pointer inline-flex">
+                        <Paperclip className="w-4 h-4" />
+                        <span>{uploadingFile ? 'Uploading…' : 'Attach files'}</span>
+                        <input
+                          type="file"
+                          multiple
+                          onChange={handleFileUpload}
+                          className="hidden"
+                          disabled={uploadingFile}
+                        />
+                      </label>
                     )}
+                    {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
                   </div>
                 )}
               </div>

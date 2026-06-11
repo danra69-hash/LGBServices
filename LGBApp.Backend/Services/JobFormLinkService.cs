@@ -249,9 +249,11 @@ public static class JobFormLinkService
         if (byUnit != null)
             return byUnit;
 
-        return totalQty <= 1
-            ? mois.FirstOrDefault(f => f.JobRequestUnitId == null)
-            : null;
+        if (totalQty <= 1)
+            return mois.FirstOrDefault(f => f.JobRequestUnitId == null);
+
+        // Multi-session: never attach a job-level MOI to every unit.
+        return null;
     }
 
     private static JobRequestResponse? FindPairedMoiJob(List<JobRequestResponse> jobs, JobRequestResponse job)
