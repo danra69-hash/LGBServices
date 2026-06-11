@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Download, FileText, FolderOpen, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FileText, FolderOpen, Trash2, Upload } from 'lucide-react';
 import {
   ApiError,
   deleteJobItemDocument,
@@ -61,17 +61,25 @@ export function JobItemFolderPanel({ job, unitNumber, onOpenMoi, onOpenMoa }: Jo
     }
   };
 
-  const handleDownload = async (documentId: number, fileName: string) => {
+  const handleOpen = async (documentId: number, fileName: string, contentType: string) => {
     try {
       const blob = await downloadJobItemDocument(job.id, documentId);
       const url = URL.createObjectURL(blob);
+      const canPreview = contentType.startsWith('image/')
+        || contentType === 'application/pdf'
+        || fileName.toLowerCase().endsWith('.pdf');
+      if (canPreview) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return;
+      }
       const a = document.createElement('a');
       a.href = url;
       a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Download failed.');
+      setError(err instanceof ApiError ? err.message : 'Failed to open file.');
     }
   };
 
@@ -138,8 +146,16 @@ export function JobItemFolderPanel({ job, unitNumber, onOpenMoi, onOpenMoa }: Jo
                     <span className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
+                        title="View"
+                        onClick={() => void handleOpen(doc.id, doc.fileName, doc.contentType)}
+                        className="p-1 hover:bg-muted rounded"
+                      >
+                        <Eye className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
                         title="Download"
-                        onClick={() => void handleDownload(doc.id, doc.fileName)}
+                        onClick={() => void handleOpen(doc.id, doc.fileName, doc.contentType)}
                         className="p-1 hover:bg-muted rounded"
                       >
                         <Download className="w-3 h-3" />

@@ -17,6 +17,7 @@ public class JobRequestUnitDto
     public string? MoiWorkflowState { get; set; }
     public string DisplayStatus { get; set; } = string.Empty;
     public string DisplayStatusKey { get; set; } = string.Empty;
+    public bool AwaitingIntakeApproval { get; set; }
 }
 
 public class WorkTrackerItemDto

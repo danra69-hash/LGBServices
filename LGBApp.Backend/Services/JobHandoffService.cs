@@ -133,16 +133,49 @@ public static class JobHandoffService
         await context.SaveChangesAsync();
     }
 
-    public static async Task OnMoiIntakeApprovedAsync(AppDbContext context, JobRequest job)
+    public static async Task OnMoiIntakeApprovedAsync(AppDbContext context, JobRequest job, int? unitNumber = null)
     {
-        SetHandoff(job, JobHandoffStatuses.PendingPrep);
         job.Status = "In Progress";
 
-        var moiForm = await context.MOIForms.FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId);
-        if (moiForm != null)
+        if (unitNumber.HasValue && job.TotalQty > 1)
         {
-            moiForm.WorkflowState = MoiWorkflowStates.PendingPrep;
-            moiForm.UpdatedAt = DateTime.UtcNow;
+            var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value)
+                ?? throw new InvalidOperationException("Session not found for intake approval.");
+
+            unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+
+            var moiForm = await context.MOIForms
+                .Where(f => f.JobRequestId == job.JobRequestId && f.JobRequestUnitId == unit.JobRequestUnitId)
+                .FirstOrDefaultAsync();
+            if (moiForm != null)
+            {
+                moiForm.WorkflowState = MoiWorkflowStates.PendingPrep;
+                moiForm.UpdatedAt = DateTime.UtcNow;
+            }
+
+            if (!job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)))
+                SetHandoff(job, JobHandoffStatuses.PendingPrep);
+        }
+        else
+        {
+            SetHandoff(job, JobHandoffStatuses.PendingPrep);
+            foreach (var unit in job.Units)
+            {
+                if (string.Equals(unit.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
+                    unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+            }
+
+            var moiForms = await context.MOIForms
+                .Where(f => f.JobRequestId == job.JobRequestId)
+                .ToListAsync();
+            foreach (var moiForm in moiForms)
+            {
+                if (moiForm.WorkflowState is MoiWorkflowStates.PendingAdminIntake or MoiWorkflowStates.Draft)
+                {
+                    moiForm.WorkflowState = MoiWorkflowStates.PendingPrep;
+                    moiForm.UpdatedAt = DateTime.UtcNow;
+                }
+            }
         }
 
         await context.SaveChangesAsync();

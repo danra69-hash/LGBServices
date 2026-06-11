@@ -5,9 +5,21 @@ namespace LGBApp.Backend.Services;
 
 public static class TaskFormVisibilityHelper
 {
-    public static bool AwaitingIntakeApproval(JobRequest job) =>
-        string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)
-        && job.TaskType is "MOI" or "MOI Approval" or "Service";
+    public static bool AwaitingIntakeApproval(JobRequest job, MOIForm? moiForm = null) =>
+        job.TaskType is "MOI" or "MOI Approval" or "Service"
+        && (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)
+            || job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
+            || string.Equals(moiForm?.WorkflowState, MoiWorkflowStates.PendingAdminIntake, StringComparison.OrdinalIgnoreCase));
+
+    public static bool UnitAwaitingIntakeApproval(JobRequestUnit unit, MOIForm? moiForm = null) =>
+        string.Equals(unit.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(moiForm?.WorkflowState, MoiWorkflowStates.PendingAdminIntake, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>EF-safe intake check (handoff flags only, no MOI form navigation).</summary>
+    public static bool JobHandoffAwaitingIntake(JobRequest job) =>
+        job.TaskType is "MOI" or "MOI Approval" or "Service"
+        && (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)
+            || job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)));
 
     public static bool CanInternalUserSeeJob(ClaimsPrincipal user, JobRequest job)
     {

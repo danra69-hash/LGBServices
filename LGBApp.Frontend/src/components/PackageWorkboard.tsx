@@ -34,7 +34,7 @@ interface PackageWorkboardProps {
   userIsAdmin?: boolean;
   canApproveIntake?: boolean;
   onBack: () => void;
-  onOpenTask: (job: JobRequestResponse) => void;
+  onOpenTask: (job: JobRequestResponse, unit?: JobRequestUnitDto) => void;
   onError: (message: string) => void;
   onSuccess: () => void;
   /** Lightweight refresh for tracking calendar only (avoids full-table reload). */
@@ -130,7 +130,7 @@ export function PackageWorkboard({
         <td className="px-4 py-2 pl-8">
           {showUnitLabel && <span className="text-xs text-muted-foreground mr-2">#{unit.unitNumber}</span>}
           {canOpen ? (
-            <button type="button" onClick={() => onOpenTask(job)} className="text-primary hover:underline font-medium text-left">
+            <button type="button" onClick={() => onOpenTask(job, unit)} className="text-primary hover:underline font-medium text-left">
               {label}
               {job.linkedFormId && (
                 <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -182,13 +182,13 @@ export function PackageWorkboard({
           <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${packageItemStatusBadgeClass(displayStatusKey(job))}`}>
             {displayStatusLabel(job)}
           </span>
-          {canApproveIntake && job.awaitingIntakeApproval && (
+          {canApproveIntake && (unit.awaitingIntakeApproval || job.awaitingIntakeApproval) && (
             <>
               <button
                 type="button"
                 className="text-primary hover:underline block mt-1 text-xs"
                 onClick={() =>
-                  void approveMoiIntake(job.id)
+                  void approveMoiIntake(job.id, (job.totalQty ?? 1) > 1 ? unit.unitNumber : undefined)
                     .then(() => onSuccess())
                     .catch((err) => onError(err instanceof ApiError ? err.message : 'Intake approval failed.'))
                 }
@@ -201,7 +201,11 @@ export function PackageWorkboard({
                 onClick={() => {
                   const reason = window.prompt('Reason for rejecting MOI back to client:');
                   if (!reason?.trim()) return;
-                  void rejectMoiIntake(job.id, reason.trim())
+                  void rejectMoiIntake(
+                    job.id,
+                    reason.trim(),
+                    (job.totalQty ?? 1) > 1 ? unit.unitNumber : undefined,
+                  )
                     .then(() => onSuccess())
                     .catch((err) => onError(err instanceof ApiError ? err.message : 'Intake rejection failed.'));
                 }}
@@ -268,7 +272,7 @@ export function PackageWorkboard({
             <button
               type="button"
               className="text-primary hover:underline block mt-1 text-xs"
-              onClick={() => onOpenTask(job)}
+              onClick={() => onOpenTask(job, unit)}
             >
               {jobHasMoaForm(job) ? 'Open MOA' : 'Prepare MOA'}
             </button>

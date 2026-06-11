@@ -9,7 +9,7 @@ import {
 
 interface MyWorkTrackerProps {
   refreshKey?: number;
-  onOpenTask?: (jobId: number, taskType: string) => void;
+  onOpenTask?: (jobId: number, taskType: string, unitNumber?: number) => void;
   onError: (message: string) => void;
   onSuccess: () => void;
 }
@@ -89,7 +89,7 @@ export function MyWorkTracker({ refreshKey = 0, onOpenTask, onError, onSuccess }
                       {isForm && onOpenTask ? (
                         <button
                           type="button"
-                          onClick={() => onOpenTask(item.jobId, item.taskType)}
+                          onClick={() => onOpenTask(item.jobId, item.taskType, item.unitNumber)}
                           className="text-primary hover:underline"
                         >
                           {label}

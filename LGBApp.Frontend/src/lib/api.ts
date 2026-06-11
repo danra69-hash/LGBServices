@@ -147,6 +147,7 @@ export interface JobRequestUnitDto {
   moiWorkflowState?: string;
   displayStatus?: string;
   displayStatusKey?: string;
+  awaitingIntakeApproval?: boolean;
 }
 
 export interface WorkTrackerItemDto {
@@ -1040,8 +1041,9 @@ export async function clientRejectMoaForm(id: number, reason: string): Promise<F
   });
 }
 
-export async function rejectMoiIntake(jobId: number, reason: string): Promise<JobRequestResponse> {
-  return request<JobRequestResponse>(`/api/jobrequests/${jobId}/reject-intake`, {
+export async function rejectMoiIntake(jobId: number, reason: string, unitNumber?: number): Promise<JobRequestResponse> {
+  const qs = unitNumber != null ? `?unitNumber=${unitNumber}` : '';
+  return request<JobRequestResponse>(`/api/jobrequests/${jobId}/reject-intake${qs}`, {
     method: 'POST',
     body: JSON.stringify({ reason }),
   });
@@ -1138,8 +1140,9 @@ export async function deleteBillingParty(id: number): Promise<void> {
   return request<void>(`/api/billingparties/${id}`, { method: 'DELETE' });
 }
 
-export async function approveMoiIntake(jobId: number): Promise<JobRequestResponse> {
-  return request<JobRequestResponse>(`/api/jobrequests/${jobId}/approve-intake`, {
+export async function approveMoiIntake(jobId: number, unitNumber?: number): Promise<JobRequestResponse> {
+  const qs = unitNumber != null ? `?unitNumber=${unitNumber}` : '';
+  return request<JobRequestResponse>(`/api/jobrequests/${jobId}/approve-intake${qs}`, {
     method: 'POST',
     body: JSON.stringify({}),
   });

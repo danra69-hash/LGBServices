@@ -104,7 +104,9 @@ public class JobRequestsController : ControllerBase
         if (!AuthHelper.CanAccessJob(User, job))
             return Forbid();
 
-        return JobRequestMapper.ToResponse(job);
+        var response = JobRequestMapper.ToResponse(job);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
+        return response;
     }
 
     [HttpPost]
@@ -144,7 +146,7 @@ public class JobRequestsController : ControllerBase
     }
 
     [HttpPost("{id}/approve-intake")]
-    public async Task<ActionResult<JobRequestResponse>> ApproveMoiIntake(int id)
+    public async Task<ActionResult<JobRequestResponse>> ApproveMoiIntake(int id, [FromQuery] int? unitNumber = null)
     {
         if (!AuthHelper.CanApproveMoiIntake(User))
             return Forbid();
@@ -152,10 +154,10 @@ public class JobRequestsController : ControllerBase
         var job = await JobQuery().FirstOrDefaultAsync(j => j.JobRequestId == id);
         if (job == null) return NotFound();
 
-        if (!TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
+        if (!await IsAwaitingIntakeAsync(job, unitNumber))
             return BadRequest(new { message = "This task is not awaiting MOI intake approval." });
 
-        await JobHandoffService.OnMoiIntakeApprovedAsync(_context, job);
+        await JobHandoffService.OnMoiIntakeApprovedAsync(_context, job, unitNumber);
         job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
         var response = JobRequestMapper.ToResponse(job);
         await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
@@ -163,7 +165,10 @@ public class JobRequestsController : ControllerBase
     }
 
     [HttpPost("{id}/reject-intake")]
-    public async Task<ActionResult<JobRequestResponse>> RejectMoiIntake(int id, RejectFormRequest request)
+    public async Task<ActionResult<JobRequestResponse>> RejectMoiIntake(
+        int id,
+        RejectFormRequest request,
+        [FromQuery] int? unitNumber = null)
     {
         if (!AuthHelper.CanApproveMoiIntake(User))
             return Forbid();
@@ -174,13 +179,10 @@ public class JobRequestsController : ControllerBase
         var job = await JobQuery().FirstOrDefaultAsync(j => j.JobRequestId == id);
         if (job == null) return NotFound();
 
-        if (!TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
+        if (!await IsAwaitingIntakeAsync(job, unitNumber))
             return BadRequest(new { message = "This task is not awaiting MOI intake approval." });
 
-        var moiForm = await _context.MOIForms
-            .Where(f => f.JobRequestId == job.JobRequestId)
-            .OrderByDescending(f => f.UpdatedAt)
-            .FirstOrDefaultAsync();
+        var moiForm = await ResolveMoiFormForIntakeAsync(job, unitNumber);
         if (moiForm == null)
             return BadRequest(new { message = "No MOI form found for this task." });
 
@@ -453,5 +455,41 @@ public class JobRequestsController : ControllerBase
         _context.JobRequests.Remove(job);
         await _context.SaveChangesAsync();
         return NoContent();
+    }
+
+    private async Task<bool> IsAwaitingIntakeAsync(JobRequest job, int? unitNumber)
+    {
+        if (unitNumber.HasValue && job.TotalQty > 1)
+        {
+            var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+            if (unit == null)
+                return false;
+
+            var moi = await ResolveMoiFormForIntakeAsync(job, unitNumber);
+            return TaskFormVisibilityHelper.UnitAwaitingIntakeApproval(unit, moi);
+        }
+
+        var moiForm = await ResolveMoiFormForIntakeAsync(job, unitNumber);
+        return TaskFormVisibilityHelper.AwaitingIntakeApproval(job, moiForm);
+    }
+
+    private async Task<MOIForm?> ResolveMoiFormForIntakeAsync(JobRequest job, int? unitNumber)
+    {
+        if (unitNumber.HasValue && job.TotalQty > 1)
+        {
+            var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+            if (unit == null)
+                return null;
+
+            return await _context.MOIForms
+                .Where(f => f.JobRequestId == job.JobRequestId && f.JobRequestUnitId == unit.JobRequestUnitId)
+                .OrderByDescending(f => f.UpdatedAt)
+                .FirstOrDefaultAsync();
+        }
+
+        return await _context.MOIForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
     }
 }

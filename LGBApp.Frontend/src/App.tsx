@@ -38,6 +38,7 @@ import {
   adminOverrideMoiForm,
   advanceJobHandoff,
   clientApproveMoaForm,
+  uploadJobItemDocument,
   clientApproveMoiForm,
   clientRejectMoaForm,
   clientRejectMoiForm,
@@ -74,6 +75,7 @@ import {
   type CustomerPackageDto,
   type CustomerResponse,
   type JobRequestResponse,
+  type JobRequestUnitDto,
   type ProductResponse,
   type UserResponse,
 } from './lib/api';
@@ -502,13 +504,20 @@ export default function App() {
 
   const handleMOISubmit = async (data: Record<string, unknown>) => {
     try {
+      const jobId = selectedJobRequest?.id ?? (data.jobId as number | undefined);
+      const unitNumber = selectedJobRequest?.activeUnitNumber
+        ?? (data.unitNumber as number | undefined);
+      const pendingFiles = Array.isArray(data.attachedFiles)
+        ? data.attachedFiles.filter((f): f is File => f instanceof File)
+        : [];
+      const { attachedFiles: _omit, ...formFields } = data;
       const payload = {
-        jobId: selectedJobRequest?.id ?? (data.jobId as number | undefined),
+        jobId,
         company: String(data.company ?? ''),
         formTemplateCode: data.formTemplateCode as string | undefined,
         financeRelated: Boolean(data.financeRelated),
         bankSignatoryMatter: Boolean(data.bankSignatoryMatter),
-        data,
+        data: formFields,
       };
       let formId = selectedMOIForm?.id as number | undefined;
       if (formId) {
@@ -516,6 +525,12 @@ export default function App() {
       } else {
         const created = await createMOIForm(payload);
         formId = created.id;
+      }
+      if (jobId && pendingFiles.length > 0) {
+        const folder = formFields.supportingDocument ? 'supporting' : 'moi';
+        for (const file of pendingFiles) {
+          await uploadJobItemDocument(jobId, folder, file, unitNumber);
+        }
       }
       const saved = formId ? await getMOIForm(formId) : null;
       await loadMOIForms();
@@ -610,6 +625,8 @@ export default function App() {
         service: job.service,
         typeOfDocument: job.service,
         taskType: job.taskType,
+        unitNumber: job.activeUnitNumber,
+        activeUnitNumber: job.activeUnitNumber,
       });
       const clientCanEdit = moiForm.workflowState === 'Draft'
         && job.taskType !== 'MOI Approval'
@@ -642,12 +659,26 @@ export default function App() {
     void openMoiFormForJob(job, true);
   };
 
-  const handleOpenFormTask = (job: JobRequestResponse) => {
-    if (canOpenMoaForJob(job)) {
-      void openMoaFormForJob(job);
+  const jobForUnit = (job: JobRequestResponse, unit?: JobRequestUnitDto): JobRequestResponse => {
+    if (!unit) return job;
+    return {
+      ...job,
+      activeUnitNumber: unit.unitNumber,
+      linkedFormId: unit.linkedFormId ?? job.linkedFormId,
+      linkedFormKind: unit.linkedFormKind ?? job.linkedFormKind,
+      hasMoiForm: unit.hasMoiForm ?? job.hasMoiForm,
+      hasMoaForm: unit.hasMoaForm ?? job.hasMoaForm,
+      moiWorkflowState: unit.moiWorkflowState ?? job.moiWorkflowState,
+    };
+  };
+
+  const handleOpenFormTask = (job: JobRequestResponse, unit?: JobRequestUnitDto) => {
+    const scoped = jobForUnit(job, unit);
+    if (canOpenMoaForJob(scoped)) {
+      void openMoaFormForJob(scoped);
       return;
     }
-    void openMoiFormForJob(job, true);
+    void openMoiFormForJob(scoped, true);
   };
 
   const handleConvertToMOA = (moiData: Record<string, unknown>) => {
@@ -932,10 +963,14 @@ export default function App() {
     }
   };
 
-  const handleOpenTrackerTask = async (jobId: number) => {
+  const handleOpenTrackerTask = async (jobId: number, unitNumber?: number) => {
     try {
       const job = await getJobRequest(jobId);
-      handleOpenFormTask(job);
+      const unit = unitNumber != null
+        ? job.units?.find((u) => u.unitNumber === unitNumber)
+        : job.units?.find((u) => u.awaitingIntakeApproval)
+          ?? (job.units?.length === 1 ? job.units[0] : undefined);
+      handleOpenFormTask(job, unit);
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'Failed to open task.');
     }
@@ -1237,7 +1272,7 @@ export default function App() {
               <>
                 <MyWorkTracker
                   refreshKey={refreshKey}
-                  onOpenTask={(jobId) => void handleOpenTrackerTask(jobId)}
+                  onOpenTask={(jobId, _taskType, unitNumber) => void handleOpenTrackerTask(jobId, unitNumber)}
                   onError={showToast}
                   onSuccess={bumpRefresh}
                 />

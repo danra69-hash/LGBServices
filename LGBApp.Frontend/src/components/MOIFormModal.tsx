@@ -1,5 +1,6 @@
 import { X, Upload, Paperclip, ArrowRight } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
+import { JobItemDocumentsSection } from './JobItemDocumentsSection';
 import { resolveFormTemplate, type FormTemplateDto } from '@/lib/api';
 import { moiWorkflowStateLabel } from '@/lib/packageItemStatus';
 
@@ -377,6 +378,14 @@ export function MOIFormModal({
                 </div>
               )}
             </div>
+
+            {(jobId ?? initialData?.jobId) && (
+              <JobItemDocumentsSection
+                jobId={Number(jobId ?? initialData?.jobId)}
+                unitNumber={initialData?.unitNumber ?? initialData?.activeUnitNumber}
+                title={viewMode ? 'Documents for review' : 'Uploaded documents'}
+              />
+            )}
 
             {/* User Input Fields */}
             <div className="space-y-4">

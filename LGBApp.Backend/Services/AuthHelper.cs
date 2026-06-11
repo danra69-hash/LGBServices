@@ -117,7 +117,7 @@ public static class AuthHelper
             return CanAccessCustomer(user, job.CustomerId);
 
         if (!IsAdmin(user) && TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
-            return false;
+            return CanApproveMoiIntake(user);
 
         var internalUserId = CurrentUserId(user);
         if (!internalUserId.HasValue)

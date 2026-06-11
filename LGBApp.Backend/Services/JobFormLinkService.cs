@@ -75,13 +75,20 @@ public static class JobFormLinkService
 
         foreach (var job in list)
         {
+            var moiForIntake = moiByJobId.GetValueOrDefault(job.Id);
             job.AwaitingIntakeApproval = TaskFormVisibilityHelper.AwaitingIntakeApproval(
                 jobEntities.GetValueOrDefault(job.Id) ?? new JobRequest
                 {
                     JobRequestId = job.Id,
                     TaskType = job.TaskType,
                     InternalHandoffStatus = job.InternalHandoffStatus,
-                });
+                    Units = job.Units.Select(u => new JobRequestUnit
+                    {
+                        UnitNumber = u.UnitNumber,
+                        InternalHandoffStatus = u.InternalHandoffStatus ?? string.Empty,
+                    }).ToList(),
+                },
+                moiForIntake);
 
             var moiForm = moiByJobId.GetValueOrDefault(job.Id);
             var pairedMoiJob = FindPairedMoiJob(list, job);
@@ -210,6 +217,7 @@ public static class JobFormLinkService
             var display = PackageItemStatusResolver.ResolveForUnit(entity, unitEntity, moi);
             unitDto.DisplayStatus = display.Label;
             unitDto.DisplayStatusKey = display.Key;
+            unitDto.AwaitingIntakeApproval = TaskFormVisibilityHelper.UnitAwaitingIntakeApproval(unitEntity, moi);
 
             var canView = user?.Identity?.IsAuthenticated == true;
             if (moa != null && (!canView || TaskFormVisibilityHelper.CanViewMoaForm(user!, entity)))
@@ -230,6 +238,8 @@ public static class JobFormLinkService
             job.LinkedFormId = null;
             job.HasMoiForm = job.Units.Any(u => u.HasMoiForm);
             job.HasMoaForm = job.Units.Any(u => u.HasMoaForm);
+            if (job.Units.Any(u => u.AwaitingIntakeApproval))
+                job.AwaitingIntakeApproval = true;
         }
     }
 

@@ -233,7 +233,7 @@ public static class FormAccessHelper
     private static async Task<List<int>> GetAssignedInternalJobIdsAsync(AppDbContext context, int userId) =>
         await context.JobRequests
             .Include(j => j.Units).ThenInclude(u => u.Assignees)
-            .Where(j => !TaskFormVisibilityHelper.AwaitingIntakeApproval(j))
+            .Where(j => !TaskFormVisibilityHelper.JobHandoffAwaitingIntake(j))
             .Where(j => j.Units.Any(u => JobRequestUnitService.IsUserAssigned(u, userId))
                 || j.AssignedUserId == userId)
             .Select(j => j.JobRequestId)

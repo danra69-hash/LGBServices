@@ -22,6 +22,9 @@ public static class MoiVisibilityHelper
         if (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
             return true;
 
+        if (job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)))
+            return true;
+
         if (form?.WorkflowState is MoiWorkflowStates.PendingPrep
             or MoiWorkflowStates.PendingRecommendation
             or MoiWorkflowStates.Approved)

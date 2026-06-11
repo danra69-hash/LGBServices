@@ -53,7 +53,8 @@ export function AdminDashboard({
     try {
       const jobs = await getJobRequests();
       const filtered = jobs.filter((job) => {
-        if (job.awaitingIntakeApproval && currentUser.canApproveMoiIntake)
+        const unitAwaitingIntake = job.units?.some((u) => u.awaitingIntakeApproval) ?? false;
+        if ((job.awaitingIntakeApproval || unitAwaitingIntake) && currentUser.canApproveMoiIntake)
           return true;
         if (job.internalHandoffStatus === 'AdminReview' && currentUser.canApproveMoa)
           return true;
