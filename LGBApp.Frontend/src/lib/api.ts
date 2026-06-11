@@ -509,6 +509,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (response.status === 401) {
+    const text = await response.text();
+    const isLoginAttempt = path === '/api/auth/login' || path === '/api/auth/register';
+    if (isLoginAttempt) {
+      throw new ApiError(formatApiError(text, 401), 401);
+    }
     clearAuth();
     onAuthExpired?.();
     throw new ApiError('Session expired. Please sign in again.', 401);

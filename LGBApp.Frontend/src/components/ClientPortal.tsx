@@ -62,10 +62,12 @@ function canOpenJobForm(
   if (isSignatoryView) {
     if (currentUser && signatoryCanSignMoi(job, currentUser, unit)) return true;
     if (Boolean(ctx.linkedFormId)) return true;
-    if (currentUser && canSignatoryStartMoi(job, currentUser)) return true;
-    return canOpenMoaForm(job) && Boolean(ctx.linkedFormId);
+    if (currentUser && canSignatoryStartMoi(job, currentUser) && canClientStartMoi(job, unit)) return true;
+    return Boolean(ctx.linkedFormKind === 'MOA' && ctx.linkedFormId);
   }
-  return canOpenMoiForm(job) || canOpenMoaForm(job);
+  if (canClientStartMoi(job, unit)) return true;
+  if (unitHasMoiForm(job, unit) || unitHasMoaForm(job, unit)) return true;
+  return canOpenMoiForm(job) || Boolean(ctx.linkedFormId);
 }
 
 function jobUnits(job: JobRequestResponse): JobRequestUnitDto[] {
@@ -280,9 +282,11 @@ export function ClientPortal({ currentUser, onOpenForm, refreshKey = 0, mode = '
   };
 
   const showFormAction = (job: JobRequestResponse, unit: JobRequestUnitDto) =>
-    canOpenJobForm(job, unit, isSignatoryView, currentUser)
-    && (unitHasMoiForm(job, unit) || unitHasMoaForm(job, unit) || canClientStartMoi(job, unit)
-      || (isSignatoryView && signatoryCanSignMoi(job, currentUser, unit)));
+    unitHasMoiForm(job, unit)
+    || unitHasMoaForm(job, unit)
+    || canClientStartMoi(job, unit)
+    || (isSignatoryView && signatoryCanSignMoi(job, currentUser, unit))
+    || (isSignatoryView && canSignatoryStartMoi(job, currentUser) && canClientStartMoi(job, unit));
 
   const openJobForm = async (job: JobRequestResponse, unit: JobRequestUnitDto) => {
     if (!canOpenJobForm(job, unit, isSignatoryView, currentUser)) return;
@@ -499,129 +503,144 @@ export function ClientPortal({ currentUser, onOpenForm, refreshKey = 0, mode = '
             <tbody>
               {filteredJobs.map((job) => {
                 const units = jobUnits(job);
-                return (
-                  <Fragment key={job.id}>
-                    {units.map((unit) => {
-                      const isExpanded = expandedUnits.has(unitKey(job.id, unit.unitNumber));
-                      return (
-                        <Fragment key={`${job.id}-${unit.unitNumber}`}>
-                          <tr className="border-t border-border">
-                            <td className="px-2 py-3 align-top">
+                const label = job.taskType === 'Service' ? job.service : job.taskType;
+                const isMultiSession = (job.totalQty ?? 1) > 1 && job.taskType === 'Service';
+
+                const renderUnitRow = (unit: JobRequestUnitDto) => {
+                  const isExpanded = expandedUnits.has(unitKey(job.id, unit.unitNumber));
+                  const taskClickable = showFormAction(job, unit) || canOpenJobForm(job, unit, isSignatoryView, currentUser);
+                  return (
+                    <Fragment key={`${job.id}-${unit.unitNumber}`}>
+                      <tr className={`border-t border-border ${isMultiSession ? 'bg-muted/10' : ''}`}>
+                        <td className="px-2 py-3 align-top">
+                          <button
+                            type="button"
+                            title={isExpanded ? 'Hide folder' : 'Show session folder'}
+                            onClick={() => toggleExpanded(job.id, unit.unitNumber)}
+                            className="p-1 rounded hover:bg-muted text-muted-foreground"
+                          >
+                            {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                          </button>
+                        </td>
+                        <td className={`px-4 py-3 ${isMultiSession ? 'pl-8' : ''}`}>
+                          {taskClickable ? (
+                            <button
+                              type="button"
+                              onClick={() => void openJobForm(job, unit)}
+                              className="text-sm font-medium text-primary hover:underline text-left"
+                            >
+                              {isMultiSession && (
+                                <span className="text-xs text-muted-foreground mr-2">#{unit.unitNumber}</span>
+                              )}
+                              {label}
+                            </button>
+                          ) : (
+                            <span className="text-sm font-medium">
+                              {isMultiSession && (
+                                <span className="text-xs text-muted-foreground mr-2">#{unit.unitNumber}</span>
+                              )}
+                              {label}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          {isMultiSession ? `Session ${unit.unitNumber}` : 'Package item'}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isSignatoryView ? (
+                            <span className="text-sm text-muted-foreground">{unit.scheduledDate || '—'}</span>
+                          ) : (
+                            <DateInput
+                              value={unit.scheduledDate}
+                              onChange={(iso) => void handleSchedule(job, unit.unitNumber, iso)}
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${packageItemStatusBadgeClass(displayStatusKeyForUnit(job, unit))}`}>
+                            {displayStatusLabelForUnit(job, unit)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {showFormAction(job, unit) ? (
+                            <button
+                              type="button"
+                              onClick={() => void openJobForm(job, unit)}
+                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              {formActionLabel(job, unit)}
+                            </button>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2 flex-wrap">
+                            {!isSignatoryView && unit.status === 'Completed' ? (
                               <button
                                 type="button"
-                                title={isExpanded ? 'Hide folder' : 'Show session folder'}
-                                onClick={() => toggleExpanded(job.id, unit.unitNumber)}
-                                className="p-1 rounded hover:bg-muted text-muted-foreground"
+                                title="Undo completion"
+                                onClick={() => void handleUndo(job, unit.unitNumber)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
                               >
-                                {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                <Undo2 className="w-3 h-3" />
+                                Undo
                               </button>
-                            </td>
-                            <td className="px-4 py-3">
-                              {canOpenJobForm(job, unit, isSignatoryView, currentUser) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void openJobForm(job, unit)}
-                                  className="text-primary hover:underline font-medium text-left"
-                                >
-                                  {job.taskType === 'Service' ? job.service : job.taskType}
-                                  {(job.totalQty ?? 1) > 1 && (
-                                    <span className="ml-1 text-xs text-muted-foreground">#{unit.unitNumber}</span>
-                                  )}
-                                </button>
-                              ) : (
-                                <span className="font-medium">
-                                  {job.taskType === 'Service' ? job.service : job.taskType}
-                                  {(job.totalQty ?? 1) > 1 && (
-                                    <span className="ml-1 text-xs text-muted-foreground">#{unit.unitNumber}</span>
-                                  )}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              {(job.totalQty ?? 1) > 1 ? `Session ${unit.unitNumber}` : 'Package item'}
-                            </td>
-                            <td className="px-4 py-3">
-                              {isSignatoryView ? (
-                                <span className="text-muted-foreground">{unit.scheduledDate || '—'}</span>
-                              ) : (
-                                <DateInput
-                                  value={unit.scheduledDate}
-                                  onChange={(iso) => void handleSchedule(job, unit.unitNumber, iso)}
-                                />
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${packageItemStatusBadgeClass(displayStatusKeyForUnit(job, unit))}`}>
-                                {displayStatusLabelForUnit(job, unit)}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3">
-                              {showFormAction(job, unit) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => void openJobForm(job, unit)}
-                                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                  {formActionLabel(job, unit)}
-                                </button>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-right">
-                              <div className="flex items-center justify-end gap-2 flex-wrap">
-                                {!isSignatoryView && unit.status === 'Completed' ? (
-                                  <button
-                                    type="button"
-                                    title="Undo completion"
-                                    onClick={() => void handleUndo(job, unit.unitNumber)}
-                                    className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted"
-                                  >
-                                    <Undo2 className="w-3 h-3" />
-                                    Undo
-                                  </button>
-                                ) : !isSignatoryView ? (
-                                  <button
-                                    type="button"
-                                    title="Mark done"
-                                    onClick={() => void handleMarkDone(job, unit.unitNumber)}
-                                    className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
-                                  >
-                                    <Check className="w-3 h-3" />
-                                    Done
-                                  </button>
-                                ) : null}
-                                {canOpenJobForm(job, unit, isSignatoryView, currentUser) && (
-                                  <button
-                                    type="button"
-                                    onClick={() => void openJobForm(job, unit)}
-                                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                                  >
-                                    <FileText className="w-4 h-4" />
-                                    {formActionLabel(job, unit)}
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                          {isExpanded && (
-                            <tr className="border-t border-border bg-muted/20">
-                              <td colSpan={7} className="px-4 py-3">
-                                <JobItemFolderPanel
-                                  job={jobForUnit(job, unit)}
-                                  unitNumber={unit.unitNumber}
-                                  onOpenMoi={() => void openJobForm(job, unit)}
-                                  onOpenMoa={() => void openJobForm(job, unit)}
-                                />
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </Fragment>
-                );
+                            ) : !isSignatoryView ? (
+                              <button
+                                type="button"
+                                title="Mark done"
+                                onClick={() => void handleMarkDone(job, unit.unitNumber)}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
+                              >
+                                <Check className="w-3 h-3" />
+                                Done
+                              </button>
+                            ) : null}
+                            {showFormAction(job, unit) && (
+                              <button
+                                type="button"
+                                onClick={() => void openJobForm(job, unit)}
+                                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                              >
+                                <FileText className="w-4 h-4" />
+                                {formActionLabel(job, unit)}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="border-t border-border bg-muted/20">
+                          <td colSpan={7} className="px-4 py-3">
+                            <JobItemFolderPanel
+                              job={jobForUnit(job, unit)}
+                              unitNumber={unit.unitNumber}
+                              onOpenMoi={() => void openJobForm(job, unit)}
+                              onOpenMoa={() => void openJobForm(job, unit)}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                };
+
+                if (isMultiSession) {
+                  return (
+                    <Fragment key={job.id}>
+                      <tr className="border-t border-border bg-muted/20">
+                        <td colSpan={7} className="px-4 py-3 font-semibold text-sm">
+                          {label}
+                        </td>
+                      </tr>
+                      {units.map((unit) => renderUnitRow(unit))}
+                    </Fragment>
+                  );
+                }
+
+                return <Fragment key={job.id}>{units.map((unit) => renderUnitRow(unit))}</Fragment>;
               })}
             </tbody>
           </table>

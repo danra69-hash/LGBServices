@@ -16,6 +16,7 @@ import {
 } from '@/lib/api';
 import {
   canAssignSecretarialTeam,
+  canOpenMoaForJob,
   canOpenMoaForm,
   displayStatusKey,
   displayStatusLabel,
@@ -119,7 +120,7 @@ export function PackageWorkboard({
     const canOpen =
       isPackageService
       || isMoiTask
-      || (job.taskType === 'MOA' && (canOpenMoaForm(job) || jobHasMoaForm(job)))
+      || canOpenMoaForJob(job)
       || (isForm && jobHasMoiForm(job));
     const showUnitLabel = (job.totalQty ?? 1) > 1;
 
@@ -206,7 +207,7 @@ export function PackageWorkboard({
               Assign secretarial team
             </button>
           )}
-          {userIsAdmin && job.internalHandoffStatus === 'AdminReview' && job.taskType === 'Service' && (jobHasMoaForm(job) || canOpenMoaForm(job)) && (
+          {userIsAdmin && job.internalHandoffStatus === 'AdminReview' && job.taskType === 'Service' && canOpenMoaForJob(job) && (
             <button
               type="button"
               className="text-primary hover:underline block mt-1 text-xs"
@@ -219,7 +220,7 @@ export function PackageWorkboard({
               Sharon approve MOA
             </button>
           )}
-          {userIsAdmin && job.internalHandoffStatus === 'MoaSharonApproved' && job.taskType === 'Service' && (
+          {job.internalHandoffStatus === 'MoaSharonApproved' && job.taskType === 'Service' && (
             <button
               type="button"
               className="text-primary hover:underline block mt-1 text-xs"
@@ -230,6 +231,15 @@ export function PackageWorkboard({
               }
             >
               Send MOA to client
+            </button>
+          )}
+          {canOpenMoaForJob(job) && job.taskType === 'Service' && (
+            <button
+              type="button"
+              className="text-primary hover:underline block mt-1 text-xs"
+              onClick={() => onOpenTask(job)}
+            >
+              {jobHasMoaForm(job) ? 'Open MOA' : 'Prepare MOA'}
             </button>
           )}
         </td>

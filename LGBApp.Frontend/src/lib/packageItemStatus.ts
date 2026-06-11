@@ -22,7 +22,7 @@ export const PACKAGE_ITEM_STATUS_KEYS = {
 
 const LABELS: Record<string, string> = {
   [PACKAGE_ITEM_STATUS_KEYS.moiNotReceived]: 'MOI not received',
-  [PACKAGE_ITEM_STATUS_KEYS.awaitingIntake]: 'Awaiting intake',
+  [PACKAGE_ITEM_STATUS_KEYS.awaitingIntake]: 'With LGB for review',
   [PACKAGE_ITEM_STATUS_KEYS.resolutionPrep]: 'Resolution prep',
   [PACKAGE_ITEM_STATUS_KEYS.pendingRecommendation]: 'Pending recommendation',
   [PACKAGE_ITEM_STATUS_KEYS.moiSignOff]: 'MOI sign-off',
@@ -63,7 +63,7 @@ const BADGE_CLASSES: Record<string, string> = {
 export const MOI_WORKFLOW_STATE_LABELS: Record<string, string> = {
   Draft: 'MOI not received',
   PendingClientMoiApproval: 'Pending client approval',
-  PendingAdminIntake: 'Awaiting intake',
+  PendingAdminIntake: 'With LGB for review',
   PendingPrep: 'Resolution prep',
   PendingRecommendation: 'Pending recommendation',
   Approved: 'MOI approved',
@@ -169,12 +169,13 @@ export function displayStatusKeyForUnit(job: JobRequestResponse, unit: JobReques
 }
 
 export function canClientStartMoi(job: JobRequestResponse, unit?: JobRequestUnitDto): boolean {
-  const key = unit ? displayStatusKeyForUnit(job, unit) : displayStatusKey(job);
-  const linked = unit && (job.totalQty ?? 1) > 1
-    ? unit.linkedFormId
-    : job.linkedFormId;
-  return (job.taskType === 'Service' || job.taskType === 'MOI')
-    && (key === PACKAGE_ITEM_STATUS_KEYS.moiNotReceived || !linked);
+  if (job.taskType !== 'Service' && job.taskType !== 'MOI')
+    return false;
+  if (unit && (job.totalQty ?? 1) > 1) {
+    return !unitHasMoiForm(job, unit) && !unit.linkedFormId;
+  }
+  const key = displayStatusKey(job);
+  return key === PACKAGE_ITEM_STATUS_KEYS.moiNotReceived || !job.linkedFormId;
 }
 
 export function signatoryCanSignMoi(
@@ -236,4 +237,22 @@ export function canOpenMoaForm(job: JobRequestResponse): boolean {
       || key === PACKAGE_ITEM_STATUS_KEYS.pendingExecute
       || key === PACKAGE_ITEM_STATUS_KEYS.completed
       || jobHasMoaForm(job));
+}
+
+/** Service-line jobs in the MOA preparation / circulation phase (internal staff). */
+export function canOpenMoaForJob(job: JobRequestResponse): boolean {
+  if (canOpenMoaForm(job) || jobHasMoaForm(job) || job.linkedFormKind === 'MOA')
+    return true;
+  if (job.taskType !== 'Service')
+    return false;
+  const handoff = job.internalHandoffStatus ?? '';
+  const key = displayStatusKey(job);
+  return handoff === 'AdminReview'
+    || handoff === 'MoaSharonApproved'
+    || handoff === 'ReadyForMoa'
+    || handoff === 'MoaCirculation'
+    || handoff === 'PendingExecute'
+    || key === PACKAGE_ITEM_STATUS_KEYS.moiApproved
+    || key === PACKAGE_ITEM_STATUS_KEYS.readyForMoa
+    || key === PACKAGE_ITEM_STATUS_KEYS.moaCirculation;
 }

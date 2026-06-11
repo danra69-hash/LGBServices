@@ -108,6 +108,22 @@ public static class TaskFormVisibilityHelper
         return AuthHelper.CanAccessJob(user, job);
     }
 
+    public static bool CanEditMoaForm(ClaimsPrincipal user, JobRequest job, bool workflowStarted)
+    {
+        if (AuthHelper.IsClientAdmin(user) || AuthHelper.IsClientSignatory(user))
+            return false;
+
+        if (!CanViewMoaForm(user, job))
+            return false;
+
+        if (workflowStarted)
+            return AuthHelper.IsAdmin(user) || AuthHelper.CanApproveMoa(user);
+
+        return AuthHelper.IsAdmin(user)
+            || AuthHelper.CanApproveMoa(user)
+            || AuthHelper.CanAccessJob(user, job);
+    }
+
     public static bool CanEditMoiForm(ClaimsPrincipal user, JobRequest job, string workflowState)
     {
         if (AuthHelper.IsClientSignatory(user))

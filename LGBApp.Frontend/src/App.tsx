@@ -14,7 +14,7 @@ import { UserManagement } from './components/UserManagement';
 import { AdminWorkflowConfig } from './components/AdminWorkflowConfig';
 import { BillingPartiesAdmin } from './components/BillingPartiesAdmin';
 import { AdminFormTemplates } from './components/AdminFormTemplates';
-import { AdminPackageOverview } from './components/AdminPackageOverview';
+import { AdminDashboard } from './components/AdminDashboard';
 import { ClientPortal } from './components/ClientPortal';
 import { ClientPackages } from './components/ClientPackages';
 import { CreateUserModal } from './components/CreateUserModal';
@@ -28,7 +28,7 @@ import { PackageTracking } from './components/PackageTracking';
 import { PackageWorkboard } from './components/PackageWorkboard';
 import { MyWorkTracker } from './components/MyWorkTracker';
 import { buildCustomerAddOnLines } from './lib/packagePricing';
-import { canSignatoryStartMoi } from './lib/packageItemStatus';
+import { canOpenMoaForJob, canSignatoryStartMoi } from './lib/packageItemStatus';
 import {
   ApiError,
   assignJobRequest,
@@ -269,11 +269,11 @@ export default function App() {
 
   const appTabs = userIsAdmin
     ? [
-        { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'dashboard' as const, label: 'Operations', icon: LayoutDashboard },
         { id: 'customers' as const, label: 'Customers', icon: Users },
         { id: 'products' as const, label: 'Products', icon: Package },
         { id: 'tracking' as const, label: 'Tracking', icon: CalendarDays },
-        { id: 'admin' as const, label: 'Admin', icon: Shield },
+        { id: 'admin' as const, label: 'Settings', icon: Shield },
       ]
     : userIsClientAdmin
       ? clientAdminTabs
@@ -630,7 +630,7 @@ export default function App() {
   };
 
   const handleOpenClientForm = (job: JobRequestResponse) => {
-    if (job.taskType === 'MOA' || job.linkedFormKind === 'MOA') {
+    if (canOpenMoaForJob(job)) {
       void openMoaFormForJob(job);
       return;
     }
@@ -638,7 +638,7 @@ export default function App() {
   };
 
   const handleOpenFormTask = (job: JobRequestResponse) => {
-    if (job.taskType === 'MOA' || job.linkedFormKind === 'MOA') {
+    if (canOpenMoaForJob(job)) {
       void openMoaFormForJob(job);
       return;
     }
@@ -1017,11 +1017,15 @@ export default function App() {
           setMOIDataForMOA(null);
         }}
         onSubmit={handleMOASubmit}
-        onStartWorkflow={userIsAdmin ? handleStartMoaWorkflow : undefined}
+        onStartWorkflow={(userIsAdmin || currentUser?.canApproveMoa) ? handleStartMoaWorkflow : undefined}
         onClientApprove={userIsClientAdmin || userIsSignatory ? handleClientApproveMoa : undefined}
         moiData={moiDataForMOA}
         initialData={moiDataForMOA}
-        viewMode={Boolean(moiDataForMOA?.workflow) || userIsClientAdmin || userIsSignatory}
+        viewMode={
+          (Boolean(moiDataForMOA?.workflow) && !userIsInternal)
+          || userIsClientAdmin
+          || userIsSignatory
+        }
         users={apiUsers}
         customers={formModalCustomers}
         userIsAdmin={userIsAdmin}
@@ -1138,17 +1142,15 @@ export default function App() {
                   onScheduleSaved={() => setScheduleRefreshKey((k) => k + 1)}
                 />
               ) : (
-                <>
-                  <AdminPackageOverview
-                    refreshKey={refreshKey}
-                    onManagePackage={(customer, pkg) => setSelectedPackageWork({ customer, package: pkg })}
-                  />
-                  <StatsCards refreshKey={refreshKey} />
-                  <CompletedServicesTable
-                    refreshKey={refreshKey}
-                    onViewHistory={() => setIsHistoryModalOpen(true)}
-                  />
-                </>
+                <AdminDashboard
+                  refreshKey={refreshKey}
+                  currentUser={currentUser}
+                  onManagePackage={(customer, pkg) => setSelectedPackageWork({ customer, package: pkg })}
+                  onOpenTask={(jobId) => void handleOpenTrackerTask(jobId)}
+                  onViewHistory={() => setIsHistoryModalOpen(true)}
+                  onError={showToast}
+                  onSuccess={bumpRefresh}
+                />
               )
             ) : (
               <>

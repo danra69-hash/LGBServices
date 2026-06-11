@@ -241,7 +241,14 @@ public class JobRequestsController : ControllerBase
                 await JobHandoffService.OnSharonMoaApprovedAsync(_context, job, moaForm);
                 break;
             case "approve-for-moa":
-                if (!isAdmin && !AuthHelper.CanApproveMoa(User)) return Forbid();
+                if (!isAdmin
+                    && !AuthHelper.CanApproveMoa(User)
+                    && !AuthHelper.CanAccessJob(User, job))
+                    return Forbid();
+                if (!isAdmin
+                    && !AuthHelper.CanApproveMoa(User)
+                    && !string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.MoaSharonApproved, StringComparison.OrdinalIgnoreCase))
+                    return Forbid();
                 await JobHandoffService.AdvanceToReadyForMoaAsync(_context, job);
                 job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
                 return Ok(JobRequestMapper.ToResponse(job));

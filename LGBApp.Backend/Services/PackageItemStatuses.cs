@@ -26,7 +26,7 @@ public static class PackageItemStatuses
     private static readonly Dictionary<string, string> Labels = new(StringComparer.OrdinalIgnoreCase)
     {
         [MoiNotReceived] = "MOI not received",
-        [AwaitingIntake] = "Awaiting intake",
+        [AwaitingIntake] = "With LGB for review",
         [ResolutionPrep] = "Resolution prep",
         [PendingRecommendation] = "Pending recommendation",
         [MoiSignOff] = "MOI sign-off",
