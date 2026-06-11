@@ -53,9 +53,14 @@ public static class WorkflowConfigSeeder
 
         var defaultMoaFields = JsonHelper.Serialize(new[]
         {
+            new { key = "typeOfDocument", label = "Type of Document", type = "text", required = true, section = "main" },
             new { key = "projectInitiator", label = "Project Initiator", type = "text", required = true, section = "main" },
             new { key = "preparedByInternal", label = "Prepared by (Internal)", type = "user", required = true, section = "prep" },
             new { key = "vettedByInternal", label = "Vetted by (Internal)", type = "user", required = true, section = "prep" },
+            new { key = "preparedByExternal", label = "Prepared by (External)", type = "text", required = false, section = "prep" },
+            new { key = "vettedByExternal", label = "Vetted by (External)", type = "text", required = false, section = "prep" },
+            new { key = "seniorManagerApproval", label = "Senior Manager approval", type = "approval", required = false, section = "approvals" },
+            new { key = "managerRegulatoryApproval", label = "Manager Regulatory approval", type = "approval", required = false, section = "approvals" },
             new { key = "shareMovement", label = "Movement of shares", type = "boolean", required = false, section = "pack" },
         });
 

@@ -39,12 +39,18 @@ interface MOAFormModalProps {
   onSubmit: (data: any) => void;
   onStartWorkflow?: (moaFormId: number) => void;
   onClientApprove?: (moaFormId: number, payload: { comments: string; signatureFileName?: string; signatureDataUrl?: string }) => void;
+  onClientReject?: (moaFormId: number, reason: string) => void;
+  onSharonApprove?: (jobId: number) => void;
+  onSharonReject?: (jobId: number, reason: string) => void;
+  onSendToClient?: (jobId: number) => void;
+  jobHandoffStatus?: string;
   viewMode?: boolean;
   initialData?: any;
   moiData?: any;
   users?: User[];
   customers: Customer[];
   userIsAdmin?: boolean;
+  canApproveMoa?: boolean;
   isClientUser?: boolean;
 }
 
@@ -54,12 +60,18 @@ export function MOAFormModal({
   onSubmit,
   onStartWorkflow,
   onClientApprove,
+  onClientReject,
+  onSharonApprove,
+  onSharonReject,
+  onSendToClient,
+  jobHandoffStatus = '',
   viewMode = false,
   initialData,
   moiData,
   users = [],
   customers,
   userIsAdmin = false,
+  canApproveMoa = false,
   isClientUser = false,
 }: MOAFormModalProps) {
   const [formTemplate, setFormTemplate] = useState<FormTemplateDto | null>(null);
@@ -68,6 +80,8 @@ export function MOAFormModal({
   const [packErrors, setPackErrors] = useState<string[]>([]);
   const [stepComments, setStepComments] = useState('');
   const [clientSignComments, setClientSignComments] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
+  const [sharonRejectReason, setSharonRejectReason] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState({
@@ -419,15 +433,18 @@ export function MOAFormModal({
                     {packErrors.map((err) => <li key={err}>{err}</li>)}
                   </ul>
                 )}
-                {moaFormId && onStartWorkflow && !viewMode && (
+                {moaFormId && onStartWorkflow && !viewMode && !isClientUser && (
                   <button
                     type="button"
-                    className="px-4 py-2 bg-green-700 text-white rounded-lg text-sm"
+                    className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted"
                     onClick={() => onStartWorkflow(moaFormId)}
                   >
-                    Start MOA circulation
+                    Start internal routing (optional)
                   </button>
                 )}
+                <p className="text-xs text-muted-foreground">
+                  Internal secretary completes this MOA, then Sharon approves before it is sent to the client for sign-off.
+                </p>
               </div>
             )}
 
@@ -680,8 +697,65 @@ export function MOAFormModal({
             </div>
           </div>
 
-          <div className="p-6 border-t border-border flex justify-between items-center gap-3">
-            <div>
+          {initialData?.rejections?.length > 0 && (
+            <div className="px-6 pb-4">
+              <div className="p-3 border border-amber-200 bg-amber-50 rounded-lg text-sm space-y-2">
+                <p className="font-medium text-amber-900">Previous rejections</p>
+                {initialData.rejections.map((r: { userName: string; reason: string; rejectedAt: string }, i: number) => (
+                  <p key={i} className="text-amber-900">
+                    <span className="font-medium">{r.userName}</span> ({r.rejectedAt}): {r.reason}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="p-6 border-t border-border flex justify-between items-start gap-3">
+            <div className="space-y-4">
+              {(userIsAdmin || canApproveMoa) && !isClientUser && initialData?.jobId && jobHandoffStatus === 'AdminReview' && (
+                <div className="space-y-2 max-w-lg">
+                  <p className="text-sm font-medium">Head secretary review</p>
+                  <div className="flex flex-wrap gap-2">
+                    {onSharonApprove && (
+                      <button
+                        type="button"
+                        className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm"
+                        onClick={() => onSharonApprove(initialData.jobId)}
+                      >
+                        Approve MOA for client release
+                      </button>
+                    )}
+                    {onSharonReject && (
+                      <button
+                        type="button"
+                        className="px-4 py-2 border border-destructive text-destructive rounded-lg text-sm disabled:opacity-50"
+                        disabled={!sharonRejectReason.trim()}
+                        onClick={() => onSharonReject(initialData.jobId, sharonRejectReason.trim())}
+                      >
+                        Reject back to secretary
+                      </button>
+                    )}
+                  </div>
+                  {onSharonReject && (
+                    <textarea
+                      rows={2}
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+                      placeholder="Rejection reason for secretary"
+                      value={sharonRejectReason}
+                      onChange={(e) => setSharonRejectReason(e.target.value)}
+                    />
+                  )}
+                </div>
+              )}
+              {(userIsAdmin || canApproveMoa) && !isClientUser && initialData?.jobId && jobHandoffStatus === 'MoaSharonApproved' && onSendToClient && (
+                <button
+                  type="button"
+                  className="px-4 py-2 bg-green-700 text-white rounded-lg text-sm"
+                  onClick={() => onSendToClient(initialData.jobId)}
+                >
+                  Send MOA to client
+                </button>
+              )}
               {isClientUser && viewMode && onClientApprove && initialData?.id && (
                 <div className="space-y-3 max-w-lg">
                   <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -700,25 +774,46 @@ export function MOAFormModal({
                     value={clientSignComments}
                     onChange={(e) => setClientSignComments(e.target.value)}
                   />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!signatureFile) return;
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        onClientApprove(initialData.id, {
-                          comments: clientSignComments,
-                          signatureFileName: signatureFile.name,
-                          signatureDataUrl: String(reader.result ?? ''),
-                        });
-                      };
-                      reader.readAsDataURL(signatureFile);
-                    }}
-                    disabled={!signatureFile}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
-                  >
-                    Sign MOA
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!signatureFile) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          onClientApprove(initialData.id, {
+                            comments: clientSignComments,
+                            signatureFileName: signatureFile.name,
+                            signatureDataUrl: String(reader.result ?? ''),
+                          });
+                        };
+                        reader.readAsDataURL(signatureFile);
+                      }}
+                      disabled={!signatureFile}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
+                    >
+                      Approve MOA
+                    </button>
+                    {onClientReject && (
+                      <button
+                        type="button"
+                        disabled={!rejectReason.trim()}
+                        onClick={() => onClientReject(initialData.id, rejectReason.trim())}
+                        className="px-4 py-2 border border-destructive text-destructive rounded-lg text-sm disabled:opacity-50"
+                      >
+                        Reject MOA
+                      </button>
+                    )}
+                  </div>
+                  {onClientReject && (
+                    <textarea
+                      rows={2}
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+                      placeholder="Rejection reason (required to reject)"
+                      value={rejectReason}
+                      onChange={(e) => setRejectReason(e.target.value)}
+                    />
+                  )}
                 </div>
               )}
               {initialData?.pendingApprovers?.length > 0 && (
@@ -741,7 +836,7 @@ export function MOAFormModal({
                 disabled={submitting}
                 className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
-                {submitting ? 'Submitting…' : 'Submit MOA'}
+                {submitting ? 'Saving…' : 'Save MOA'}
               </button>
             )}
             {workflow && !isClientUser && (

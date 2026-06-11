@@ -33,6 +33,7 @@ interface MOIFormModalProps {
   onRecommend?: (formId: number, comments: string) => void;
   onSubmitForApproval?: (formId: number) => void;
   onClientApprove?: (formId: number, payload: { comments: string; signatureFileName?: string; signatureDataUrl?: string }) => void;
+  onClientReject?: (formId: number, reason: string) => void;
   currentUserName?: string;
   onAdminOverride?: (formId: number, comments: string) => void;
   userIsAdmin?: boolean;
@@ -49,7 +50,7 @@ interface MOIFormModalProps {
 }
 
 export function MOIFormModal({
-  isOpen, onClose, onSubmit, onConvertToMOA, onAccept, onRecommend, onSubmitForApproval, onClientApprove, onAdminOverride,
+  isOpen, onClose, onSubmit, onConvertToMOA, onAccept, onRecommend, onSubmitForApproval, onClientApprove, onClientReject, onAdminOverride,
   userIsAdmin = false, isClientUser = false, isMoiApprovalTask = false,
   viewMode = false, initialData, jobId, jobStatus, users = [], customers, products, serviceUsage,
   currentUserName = '',
@@ -57,6 +58,7 @@ export function MOIFormModal({
   const [formTemplate, setFormTemplate] = useState<FormTemplateDto | null>(null);
   const [workflowState, setWorkflowState] = useState('Draft');
   const [recommendComments, setRecommendComments] = useState('');
+  const [rejectReason, setRejectReason] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const pendingApprovers: string[] = initialData?.pendingApprovers ?? [];
   const requiredApprovers: string[] = initialData?.requiredApprovers ?? [];
@@ -904,25 +906,59 @@ export function MOIFormModal({
                     value={recommendComments}
                     onChange={(e) => setRecommendComments(e.target.value)}
                   />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!signatureFile) return;
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        onClientApprove(initialData.id, {
-                          comments: recommendComments,
-                          signatureFileName: signatureFile.name,
-                          signatureDataUrl: String(reader.result ?? ''),
-                        });
-                      };
-                      reader.readAsDataURL(signatureFile);
-                    }}
-                    disabled={!signatureFile}
-                    className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
-                  >
-                    Sign MOI
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!signatureFile) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          onClientApprove(initialData.id, {
+                            comments: recommendComments,
+                            signatureFileName: signatureFile.name,
+                            signatureDataUrl: String(reader.result ?? ''),
+                          });
+                        };
+                        reader.readAsDataURL(signatureFile);
+                      }}
+                      disabled={!signatureFile}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
+                    >
+                      Sign MOI
+                    </button>
+                    {onClientReject && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!rejectReason.trim()) return;
+                          onClientReject(initialData.id, rejectReason.trim());
+                        }}
+                        disabled={!rejectReason.trim()}
+                        className="px-4 py-2 border border-destructive text-destructive rounded-lg text-sm disabled:opacity-50"
+                      >
+                        Reject MOI
+                      </button>
+                    )}
+                  </div>
+                  {onClientReject && (
+                    <textarea
+                      rows={2}
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+                      placeholder="Rejection reason (required to reject)"
+                      value={rejectReason}
+                      onChange={(e) => setRejectReason(e.target.value)}
+                    />
+                  )}
+                </div>
+              )}
+              {initialData?.rejections?.length > 0 && (
+                <div className="mt-4 p-3 border border-amber-200 bg-amber-50 rounded-lg text-sm space-y-2">
+                  <p className="font-medium text-amber-900">Previous rejections</p>
+                  {initialData.rejections.map((r: { userName: string; reason: string; rejectedAt: string }, i: number) => (
+                    <p key={i} className="text-amber-900">
+                      <span className="font-medium">{r.userName}</span> ({r.rejectedAt}): {r.reason}
+                    </p>
+                  ))}
                 </div>
               )}
               {viewMode && workflowState === 'PendingClientMoiApproval' && pendingApprovers.length > 0 && !canSignMoi && (

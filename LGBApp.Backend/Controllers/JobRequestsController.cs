@@ -162,6 +162,38 @@ public class JobRequestsController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("{id}/reject-intake")]
+    public async Task<ActionResult<JobRequestResponse>> RejectMoiIntake(int id, RejectFormRequest request)
+    {
+        if (!AuthHelper.CanApproveMoiIntake(User))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest(new { message = "A rejection reason is required." });
+
+        var job = await JobQuery().FirstOrDefaultAsync(j => j.JobRequestId == id);
+        if (job == null) return NotFound();
+
+        if (!TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
+            return BadRequest(new { message = "This task is not awaiting MOI intake approval." });
+
+        var moiForm = await _context.MOIForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
+        if (moiForm == null)
+            return BadRequest(new { message = "No MOI form found for this task." });
+
+        var user = await _context.Users.FindAsync(AuthHelper.CurrentUserId(User) ?? 0);
+        if (user == null) return Unauthorized();
+
+        await JobHandoffService.OnMoiIntakeRejectedAsync(_context, job, moiForm, user, request.Reason);
+        job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
+        var response = JobRequestMapper.ToResponse(job);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
+        return Ok(response);
+    }
+
     [HttpPost("{id}/assign")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> AssignJob(int id, AssignJobRequest request)
@@ -241,17 +273,25 @@ public class JobRequestsController : ControllerBase
                 await JobHandoffService.OnSharonMoaApprovedAsync(_context, job, moaForm);
                 break;
             case "approve-for-moa":
-                if (!isAdmin
-                    && !AuthHelper.CanApproveMoa(User)
-                    && !AuthHelper.CanAccessJob(User, job))
-                    return Forbid();
-                if (!isAdmin
-                    && !AuthHelper.CanApproveMoa(User)
-                    && !string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.MoaSharonApproved, StringComparison.OrdinalIgnoreCase))
+                if (!isAdmin && !AuthHelper.CanApproveMoa(User))
                     return Forbid();
                 await JobHandoffService.AdvanceToReadyForMoaAsync(_context, job);
                 job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
                 return Ok(JobRequestMapper.ToResponse(job));
+            case "reject-moa":
+                if (!AuthHelper.CanApproveMoa(User) && !isAdmin)
+                    return Forbid();
+                if (job.InternalHandoffStatus != JobHandoffStatuses.AdminReview)
+                    return BadRequest("MOA can only be rejected by Sharon while awaiting head secretary review.");
+                var moaToReject = await _context.MOAForms.FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId);
+                if (moaToReject == null)
+                    return BadRequest("No MOA form found for this task.");
+                var rejectUser = await _context.Users.FindAsync(AuthHelper.CurrentUserId(User) ?? 0);
+                if (rejectUser == null) return Unauthorized();
+                if (string.IsNullOrWhiteSpace(request.Comments))
+                    return BadRequest("A rejection reason is required.");
+                await JobHandoffService.OnMoaSharonRejectedAsync(_context, job, moaToReject, rejectUser, request.Comments!);
+                break;
             default:
                 return BadRequest("Unknown handoff action.");
         }

@@ -17,6 +17,7 @@ public class MOAForm
     public bool ShareMovement { get; set; }
     public string PackChecklistJson { get; set; } = "{}";
     public string ClientApprovalsJson { get; set; } = "[]";
+    public string RejectionsJson { get; set; } = "[]";
     public DateTime? SharonApprovedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

@@ -155,6 +155,7 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "MOIForms", "RecommendedAt", "TEXT NULL");
         EnsureColumn(context, "MOIForms", "RecommendationComments", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(context, "MOIForms", "ClientApprovalsJson", "TEXT NOT NULL DEFAULT '[]'");
+        EnsureColumn(context, "MOIForms", "RejectionsJson", "TEXT NOT NULL DEFAULT '[]'");
 
         EnsureColumn(context, "MOAForms", "FormTemplateCode", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(context, "MOAForms", "FinanceRelated", "INTEGER NOT NULL DEFAULT 0");
@@ -162,6 +163,7 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "MOAForms", "ShareMovement", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(context, "MOAForms", "PackChecklistJson", "TEXT NOT NULL DEFAULT '{}'");
         EnsureColumn(context, "MOAForms", "ClientApprovalsJson", "TEXT NOT NULL DEFAULT '[]'");
+        EnsureColumn(context, "MOAForms", "RejectionsJson", "TEXT NOT NULL DEFAULT '[]'");
         EnsureColumn(context, "MOAForms", "SharonApprovedAt", "TEXT NULL");
         EnsureColumn(context, "MOAForms", "JobRequestId", "INTEGER NULL");
 

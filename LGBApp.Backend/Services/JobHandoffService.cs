@@ -183,6 +183,9 @@ public static class JobHandoffService
 
     public static async Task OnSharonMoaApprovedAsync(AppDbContext context, JobRequest job, MOAForm? moaForm)
     {
+        if (job.InternalHandoffStatus != JobHandoffStatuses.AdminReview)
+            throw new InvalidOperationException("MOA must be in head secretary review before approval.");
+
         SetHandoff(job, JobHandoffStatuses.MoaSharonApproved);
         if (moaForm != null)
         {
@@ -230,7 +233,133 @@ public static class JobHandoffService
         if (!form.JobRequestId.HasValue) return;
         var job = await context.JobRequests.FindAsync(form.JobRequestId.Value);
         if (job == null) return;
-        SetHandoff(job, JobHandoffStatuses.MoaCirculation);
+        // Internal LGB routing only — client circulation starts after Sharon releases (ReadyForMoa).
+        if (string.IsNullOrWhiteSpace(job.InternalHandoffStatus)
+            || job.InternalHandoffStatus is JobHandoffStatuses.PendingPrep
+                or JobHandoffStatuses.ResoInProgress)
+            SetHandoff(job, JobHandoffStatuses.AdminReview);
+        job.Status = "In Progress";
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnMoiClientRejectedAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOIForm form,
+        User user,
+        string reason)
+    {
+        form.WorkflowState = MoiWorkflowStates.Draft;
+        form.ClientApprovalsJson = "[]";
+        form.UpdatedAt = DateTime.UtcNow;
+        FormRejectionService.AddMoiRejection(form, new FormRejectionRecord
+        {
+            Stage = FormRejectionStages.MoiClientApproval,
+            UserId = user.UserId,
+            UserName = user.Name,
+            Reason = reason.Trim(),
+            RejectedAt = DateTime.UtcNow,
+        });
+
+        if (form.JobRequestUnitId.HasValue)
+        {
+            var unit = await context.JobRequestUnits.FindAsync(form.JobRequestUnitId.Value);
+            if (unit != null)
+                unit.InternalHandoffStatus = string.Empty;
+        }
+        else
+            SetHandoff(job, string.Empty);
+
+        job.Status = "In Progress";
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnMoiIntakeRejectedAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOIForm form,
+        User user,
+        string reason)
+    {
+        form.WorkflowState = MoiWorkflowStates.Draft;
+        form.UpdatedAt = DateTime.UtcNow;
+        FormRejectionService.AddMoiRejection(form, new FormRejectionRecord
+        {
+            Stage = FormRejectionStages.MoiIntake,
+            UserId = user.UserId,
+            UserName = user.Name,
+            Reason = reason.Trim(),
+            RejectedAt = DateTime.UtcNow,
+        });
+
+        if (form.JobRequestUnitId.HasValue)
+        {
+            var unit = await context.JobRequestUnits.FindAsync(form.JobRequestUnitId.Value);
+            if (unit != null)
+                unit.InternalHandoffStatus = string.Empty;
+        }
+        else
+            SetHandoff(job, string.Empty);
+
+        job.Status = "In Progress";
+
+        var docs = context.JobItemDocuments.Where(d => d.JobRequestId == job.JobRequestId);
+        if (form.JobRequestUnitId.HasValue)
+        {
+            docs = docs.Where(d =>
+                d.JobRequestUnitId == form.JobRequestUnitId
+                || d.JobRequestUnitId == null);
+        }
+
+        foreach (var doc in await docs.ToListAsync())
+            doc.VisibleToInternal = false;
+
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnMoaSharonRejectedAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOAForm form,
+        User user,
+        string reason)
+    {
+        form.SharonApprovedAt = null;
+        form.UpdatedAt = DateTime.UtcNow;
+        FormRejectionService.AddMoaRejection(form, new FormRejectionRecord
+        {
+            Stage = FormRejectionStages.MoaSharonReview,
+            UserId = user.UserId,
+            UserName = user.Name,
+            Reason = reason.Trim(),
+            RejectedAt = DateTime.UtcNow,
+        });
+
+        SetHandoff(job, JobHandoffStatuses.AdminReview);
+        job.Status = "In Progress";
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnMoaClientRejectedAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOAForm form,
+        User user,
+        string reason)
+    {
+        form.ClientApprovalsJson = "[]";
+        form.SharonApprovedAt = null;
+        form.UpdatedAt = DateTime.UtcNow;
+        FormRejectionService.AddMoaRejection(form, new FormRejectionRecord
+        {
+            Stage = FormRejectionStages.MoaClientApproval,
+            UserId = user.UserId,
+            UserName = user.Name,
+            Reason = reason.Trim(),
+            RejectedAt = DateTime.UtcNow,
+        });
+
+        SetHandoff(job, JobHandoffStatuses.AdminReview);
         job.Status = "In Progress";
         await context.SaveChangesAsync();
     }

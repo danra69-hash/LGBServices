@@ -18,6 +18,7 @@ public class FormResponse
     public List<string>? PackValidationErrors { get; set; }
     public WorkflowInstanceDto? Workflow { get; set; }
     public List<ClientApprovalDto>? ClientApprovals { get; set; }
+    public List<FormRejectionDto>? Rejections { get; set; }
     public List<string>? RequiredApprovers { get; set; }
     public List<string>? PendingApprovers { get; set; }
     public string? SharonApprovedAt { get; set; }

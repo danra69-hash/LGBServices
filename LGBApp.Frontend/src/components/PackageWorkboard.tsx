@@ -5,6 +5,7 @@ import {
   ApiError,
   advanceJobHandoff,
   approveMoiIntake,
+  rejectMoiIntake,
   assignJobRequest,
   assignSecretarialTeam,
   getJobRequests,
@@ -182,17 +183,32 @@ export function PackageWorkboard({
             {displayStatusLabel(job)}
           </span>
           {canApproveIntake && job.awaitingIntakeApproval && (
-            <button
-              type="button"
-              className="text-primary hover:underline block mt-1 text-xs"
-              onClick={() =>
-                void approveMoiIntake(job.id)
-                  .then(() => onSuccess())
-                  .catch((err) => onError(err instanceof ApiError ? err.message : 'Intake approval failed.'))
-              }
-            >
-              Approve MOI intake
-            </button>
+            <>
+              <button
+                type="button"
+                className="text-primary hover:underline block mt-1 text-xs"
+                onClick={() =>
+                  void approveMoiIntake(job.id)
+                    .then(() => onSuccess())
+                    .catch((err) => onError(err instanceof ApiError ? err.message : 'Intake approval failed.'))
+                }
+              >
+                Approve MOI intake
+              </button>
+              <button
+                type="button"
+                className="text-destructive hover:underline block mt-1 text-xs"
+                onClick={() => {
+                  const reason = window.prompt('Reason for rejecting MOI back to client:');
+                  if (!reason?.trim()) return;
+                  void rejectMoiIntake(job.id, reason.trim())
+                    .then(() => onSuccess())
+                    .catch((err) => onError(err instanceof ApiError ? err.message : 'Intake rejection failed.'));
+                }}
+              >
+                Reject MOI to client
+              </button>
+            </>
           )}
           {userIsAdmin && canAssignSecretarialTeam(job, items) && (
             <button
@@ -208,19 +224,34 @@ export function PackageWorkboard({
             </button>
           )}
           {userIsAdmin && job.internalHandoffStatus === 'AdminReview' && job.taskType === 'Service' && canOpenMoaForJob(job) && (
-            <button
-              type="button"
-              className="text-primary hover:underline block mt-1 text-xs"
-              onClick={() =>
-                void advanceJobHandoff(job.id, 'sharon-approve-moa')
-                  .then(() => onSuccess())
-                  .catch((err) => onError(err instanceof ApiError ? err.message : 'MOA approval failed.'))
-              }
-            >
-              Sharon approve MOA
-            </button>
+            <>
+              <button
+                type="button"
+                className="text-primary hover:underline block mt-1 text-xs"
+                onClick={() =>
+                  void advanceJobHandoff(job.id, 'sharon-approve-moa')
+                    .then(() => onSuccess())
+                    .catch((err) => onError(err instanceof ApiError ? err.message : 'MOA approval failed.'))
+                }
+              >
+                Approve MOA for client
+              </button>
+              <button
+                type="button"
+                className="text-destructive hover:underline block mt-1 text-xs"
+                onClick={() => {
+                  const reason = window.prompt('Reason for rejecting MOA back to secretary:');
+                  if (!reason?.trim()) return;
+                  void advanceJobHandoff(job.id, 'reject-moa', reason.trim())
+                    .then(() => onSuccess())
+                    .catch((err) => onError(err instanceof ApiError ? err.message : 'MOA rejection failed.'));
+                }}
+              >
+                Reject MOA to secretary
+              </button>
+            </>
           )}
-          {job.internalHandoffStatus === 'MoaSharonApproved' && job.taskType === 'Service' && (
+          {userIsAdmin && job.internalHandoffStatus === 'MoaSharonApproved' && job.taskType === 'Service' && (
             <button
               type="button"
               className="text-primary hover:underline block mt-1 text-xs"

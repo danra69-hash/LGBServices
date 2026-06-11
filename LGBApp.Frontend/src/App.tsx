@@ -36,8 +36,11 @@ import {
   createCustomer,
   deleteCustomer,
   adminOverrideMoiForm,
+  advanceJobHandoff,
   clientApproveMoaForm,
   clientApproveMoiForm,
+  clientRejectMoaForm,
+  clientRejectMoiForm,
   createMOAForm,
   createMOIForm,
   getMOAForm,
@@ -546,7 +549,7 @@ export default function App() {
         setMOIDataForMOA({
           ...form.data,
           id: form.id,
-          jobId: form.jobId,
+          jobId: form.jobId ?? job.id,
           moiFormId: form.moiFormId,
           company: form.company,
           financeRelated: form.financeRelated,
@@ -556,8 +559,10 @@ export default function App() {
           packValidationErrors: form.packValidationErrors,
           workflow: form.workflow,
           clientApprovals: form.clientApprovals,
+          rejections: form.rejections,
           requiredApprovers: form.requiredApprovers,
           pendingApprovers: form.pendingApprovers,
+          sharonApprovedAt: form.sharonApprovedAt,
         });
         setIsMOAFormOpen(true);
         return;
@@ -777,11 +782,79 @@ export default function App() {
     try {
       await clientApproveMoaForm(formId, payload);
       bumpRefresh();
-      showToast('MOA signed off.');
+      showToast('MOA approved — returned to LGB for execution.');
       setIsMOAFormOpen(false);
       setMOIDataForMOA(null);
+      setSelectedJobRequest(null);
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'Failed to sign off MOA.');
+    }
+  };
+
+  const handleClientRejectMoi = async (formId: number, reason: string) => {
+    try {
+      await clientRejectMoiForm(formId, reason);
+      await loadMOIForms();
+      bumpRefresh();
+      showToast('MOI rejected — returned to draft for revision.');
+      setIsMOIFormOpen(false);
+      setSelectedMOIForm(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to reject MOI.');
+    }
+  };
+
+  const handleClientRejectMoa = async (formId: number, reason: string) => {
+    try {
+      await clientRejectMoaForm(formId, reason);
+      bumpRefresh();
+      showToast('MOA rejected — returned to internal team.');
+      setIsMOAFormOpen(false);
+      setMOIDataForMOA(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to reject MOA.');
+    }
+  };
+
+  const handleSharonApproveMoa = async (jobId: number) => {
+    try {
+      await advanceJobHandoff(jobId, 'sharon-approve-moa');
+      bumpRefresh();
+      showToast('MOA approved — ready to send to client.');
+      if (selectedJobRequest?.id === jobId) {
+        const updated = await getJobRequest(jobId);
+        setSelectedJobRequest(updated);
+      }
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'MOA approval failed.');
+    }
+  };
+
+  const handleSharonRejectMoa = async (jobId: number, reason: string) => {
+    try {
+      await advanceJobHandoff(jobId, 'reject-moa', reason);
+      bumpRefresh();
+      showToast('MOA rejected — returned to secretary.');
+      setIsMOAFormOpen(false);
+      setMOIDataForMOA(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'MOA rejection failed.');
+    }
+  };
+
+  const handleSendMoaToClient = async (jobId: number) => {
+    try {
+      await advanceJobHandoff(jobId, 'approve-for-moa');
+      bumpRefresh();
+      showToast('MOA sent to client for approval.');
+      setIsMOAFormOpen(false);
+      setMOIDataForMOA(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to send MOA to client.');
     }
   };
 
@@ -996,6 +1069,7 @@ export default function App() {
         onRecommend={handleRecommendMoi}
         onSubmitForApproval={handleSubmitMoiForApproval}
         onClientApprove={handleClientApproveMoi}
+        onClientReject={userIsClientAdmin || userIsSignatory ? handleClientRejectMoi : undefined}
         onAdminOverride={userIsAdmin ? handleAdminOverrideMoi : undefined}
         isClientUser={userIsClientAdmin || userIsSignatory}
         isMoiApprovalTask={selectedJobRequest?.taskType === 'MOI Approval'}
@@ -1017,18 +1091,25 @@ export default function App() {
           setMOIDataForMOA(null);
         }}
         onSubmit={handleMOASubmit}
-        onStartWorkflow={(userIsAdmin || currentUser?.canApproveMoa) ? handleStartMoaWorkflow : undefined}
+        onStartWorkflow={userIsInternal ? handleStartMoaWorkflow : undefined}
         onClientApprove={userIsClientAdmin || userIsSignatory ? handleClientApproveMoa : undefined}
+        onClientReject={userIsClientAdmin || userIsSignatory ? handleClientRejectMoa : undefined}
+        onSharonApprove={userIsAdmin || currentUser?.canApproveMoa ? handleSharonApproveMoa : undefined}
+        onSharonReject={userIsAdmin || currentUser?.canApproveMoa ? handleSharonRejectMoa : undefined}
+        onSendToClient={userIsAdmin || currentUser?.canApproveMoa ? handleSendMoaToClient : undefined}
+        jobHandoffStatus={selectedJobRequest?.internalHandoffStatus ?? ''}
         moiData={moiDataForMOA}
         initialData={moiDataForMOA}
         viewMode={
           (Boolean(moiDataForMOA?.workflow) && !userIsInternal)
           || userIsClientAdmin
           || userIsSignatory
+          || (userIsInternal && Boolean(moiDataForMOA?.sharonApprovedAt))
         }
         users={apiUsers}
         customers={formModalCustomers}
         userIsAdmin={userIsAdmin}
+        canApproveMoa={Boolean(currentUser?.canApproveMoa)}
         isClientUser={userIsClientAdmin || userIsSignatory}
       />
       <JobRequestDetailsModal

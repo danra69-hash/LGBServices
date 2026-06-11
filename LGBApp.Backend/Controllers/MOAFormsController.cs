@@ -177,15 +177,69 @@ public class MOAFormsController : ControllerBase
         return FormMapper.ToMoaResponse(form, workflow, customer);
     }
 
+    [HttpPost("{id}/client-reject")]
+    public async Task<ActionResult<FormResponse>> ClientReject(int id, RejectFormRequest request)
+    {
+        var user = await GetCurrentUserAsync();
+        if (user == null) return Unauthorized();
+
+        if (!AuthHelper.IsExternalUser(User))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest("A rejection reason is required.");
+
+        var form = await _context.MOAForms.FindAsync(id);
+        if (form == null) return NotFound();
+
+        if (!form.JobRequestId.HasValue)
+            return BadRequest("MOA must be linked to a job.");
+
+        var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
+        if (job == null) return NotFound();
+
+        if (job.InternalHandoffStatus is not (
+            JobHandoffStatuses.ReadyForMoa
+            or JobHandoffStatuses.MoaCirculation))
+            return BadRequest("MOA is not available for client sign-off.");
+
+        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
+        if (customer == null) return BadRequest("Customer not found.");
+
+        var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
+        var holderName = user.Name.Trim();
+        if (!required.Any(n => n.Equals(holderName, StringComparison.OrdinalIgnoreCase)))
+            return Forbid();
+
+        await JobHandoffService.OnMoaClientRejectedAsync(_context, job, form, user, request.Reason);
+
+        var workflow = await WorkflowService.GetWorkflowForMoaAsync(_context, id);
+        return FormMapper.ToMoaResponse(form, workflow, customer);
+    }
+
     [HttpPost("{id}/start-workflow")]
     public async Task<ActionResult<FormResponse>> StartWorkflow(int id)
     {
+        if (!AuthHelper.IsInternalStaff(User))
+            return Forbid();
+
         var form = await _context.MOAForms.FindAsync(id);
         if (form == null) return NotFound();
 
         var existing = await WorkflowService.GetWorkflowForMoaAsync(_context, id);
         if (existing != null)
             return BadRequest("Workflow already started.");
+
+        if (form.JobRequestId.HasValue)
+        {
+            var linkedJob = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
+            if (linkedJob != null
+                && linkedJob.InternalHandoffStatus is not (
+                    JobHandoffStatuses.AdminReview
+                    or JobHandoffStatuses.PendingPrep
+                    or JobHandoffStatuses.ResoInProgress))
+                return BadRequest("Internal MOA routing can only start while the MOA is being prepared.");
+        }
 
         if (form.MOIFormId.HasValue)
         {
@@ -210,6 +264,16 @@ public class MOAFormsController : ControllerBase
     {
         var form = await _context.MOAForms.FindAsync(id);
         if (form == null) return NotFound();
+
+        if (form.JobRequestId.HasValue)
+        {
+            var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
+            if (job != null
+                && job.InternalHandoffStatus is JobHandoffStatuses.MoaSharonApproved
+                    or JobHandoffStatuses.ReadyForMoa
+                    or JobHandoffStatuses.MoaCirculation)
+                return BadRequest("MOA cannot be edited after Sharon has approved it for client release.");
+        }
 
         form.MOIFormId = request.MoiFormId ?? form.MOIFormId;
         form.Company = request.Company;

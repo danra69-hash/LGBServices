@@ -95,6 +95,16 @@ public static class FormMapper
                 : ClientApprovalService.PendingApprovers(required, records);
         }
 
+        response.Rejections = FormRejectionService.ParseMoi(form)
+            .Select(r => new FormRejectionDto
+            {
+                Stage = r.Stage,
+                UserId = r.UserId,
+                UserName = r.UserName,
+                Reason = r.Reason,
+                RejectedAt = r.RejectedAt.ToString("yyyy-MM-dd"),
+            }).ToList();
+
         return response;
     }
 
@@ -115,6 +125,16 @@ public static class FormMapper
             response.RequiredApprovers = required;
             response.PendingApprovers = ClientApprovalService.PendingApprovers(required, records);
         }
+
+        response.Rejections = FormRejectionService.ParseMoa(form)
+            .Select(r => new FormRejectionDto
+            {
+                Stage = r.Stage,
+                UserId = r.UserId,
+                UserName = r.UserName,
+                Reason = r.Reason,
+                RejectedAt = r.RejectedAt.ToString("yyyy-MM-dd"),
+            }).ToList();
 
         return response;
     }

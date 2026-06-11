@@ -309,6 +309,14 @@ export interface ClientApprovalDto {
   signedAt: string;
 }
 
+export interface FormRejectionDto {
+  stage: string;
+  userId: number;
+  userName: string;
+  reason: string;
+  rejectedAt: string;
+}
+
 export interface FormResponse {
   id: number;
   jobId?: number;
@@ -324,6 +332,7 @@ export interface FormResponse {
   packValidationErrors?: string[];
   workflow?: WorkflowInstanceDto;
   clientApprovals?: ClientApprovalDto[];
+  rejections?: FormRejectionDto[];
   requiredApprovers?: string[];
   pendingApprovers?: string[];
   sharonApprovedAt?: string;
@@ -1017,6 +1026,27 @@ export async function clientApproveMoaForm(id: number, payload: ClientApprovePay
   });
 }
 
+export async function clientRejectMoiForm(id: number, reason: string): Promise<FormResponse> {
+  return request<FormResponse>(`/api/moiforms/${id}/client-reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function clientRejectMoaForm(id: number, reason: string): Promise<FormResponse> {
+  return request<FormResponse>(`/api/moaforms/${id}/client-reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function rejectMoiIntake(jobId: number, reason: string): Promise<JobRequestResponse> {
+  return request<JobRequestResponse>(`/api/jobrequests/${jobId}/reject-intake`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export async function recommendMoiForm(id: number, comments: string): Promise<FormResponse> {
   return request<FormResponse>(`/api/moiforms/${id}/recommend`, {
     method: 'POST',
@@ -1117,7 +1147,7 @@ export async function approveMoiIntake(jobId: number): Promise<JobRequestRespons
 
 export async function advanceJobHandoff(
   jobId: number,
-  action: 'start-prep' | 'start-reso' | 'submit-admin-review' | 'sharon-approve-moa' | 'approve-for-moa',
+  action: 'start-prep' | 'start-reso' | 'submit-admin-review' | 'sharon-approve-moa' | 'approve-for-moa' | 'reject-moa',
   comments?: string,
 ): Promise<JobRequestResponse> {
   return request<JobRequestResponse>(`/api/jobrequests/${jobId}/handoff`, {

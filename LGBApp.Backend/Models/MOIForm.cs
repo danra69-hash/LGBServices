@@ -18,6 +18,7 @@ public class MOIForm
     public DateTime? RecommendedAt { get; set; }
     public string RecommendationComments { get; set; } = string.Empty;
     public string ClientApprovalsJson { get; set; } = "[]";
+    public string RejectionsJson { get; set; } = "[]";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

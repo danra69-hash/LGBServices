@@ -269,6 +269,45 @@ public class MOIFormsController : ControllerBase
         return FormMapper.ToMoiResponse(form, customer: customer);
     }
 
+    [HttpPost("{id}/client-reject")]
+    public async Task<ActionResult<FormResponse>> ClientReject(int id, RejectFormRequest request)
+    {
+        var user = await GetCurrentUserAsync();
+        if (user == null) return Unauthorized();
+
+        if (!AuthHelper.IsExternalUser(User))
+            return Forbid();
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+            return BadRequest("A rejection reason is required.");
+
+        var form = await _context.MOIForms.FindAsync(id);
+        if (form == null) return NotFound();
+
+        if (form.WorkflowState != MoiWorkflowStates.PendingClientMoiApproval)
+            return BadRequest("MOI is not awaiting client approval.");
+
+        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
+        if (customer == null) return BadRequest("Customer not found.");
+
+        var holder = customer.AccountHolders.FirstOrDefault(h =>
+            h.UserId == user.UserId && h.NeedsMoiApproval)
+            ?? customer.AccountHolders.FirstOrDefault(h =>
+                h.NeedsMoiApproval
+                && h.Name.Equals(user.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (holder == null)
+            return Forbid();
+
+        if (!form.JobRequestId.HasValue)
+            return BadRequest("MOI must be linked to a job.");
+
+        var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
+        if (job == null) return NotFound();
+
+        await JobHandoffService.OnMoiClientRejectedAsync(_context, job, form, user, request.Reason);
+        return FormMapper.ToMoiResponse(form, customer: customer);
+    }
+
     [HttpPost("{id}/recommend")]
     public async Task<ActionResult<FormResponse>> Recommend(int id, RecommendMoiRequest request)
     {
