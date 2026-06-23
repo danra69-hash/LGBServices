@@ -30,6 +30,16 @@ public static class ClientApprovalService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    public static AccountHolder? FindMoiApprovalHolderForUser(Customer customer, User user) =>
+        customer.AccountHolders.FirstOrDefault(h => h.UserId == user.UserId && h.NeedsMoiApproval)
+        ?? customer.AccountHolders.FirstOrDefault(h =>
+            h.NeedsMoiApproval
+            && !string.IsNullOrWhiteSpace(h.Email)
+            && h.Email.Equals(user.Email, StringComparison.OrdinalIgnoreCase))
+        ?? customer.AccountHolders.FirstOrDefault(h =>
+            h.NeedsMoiApproval
+            && h.Name.Equals(user.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+
     public static AccountHolder? FindMoaHolderForUser(Customer customer, User user) =>
         customer.AccountHolders.FirstOrDefault(h => h.UserId == user.UserId && h.NeedsMoa)
         ?? customer.AccountHolders.FirstOrDefault(h =>
@@ -39,6 +49,19 @@ public static class ClientApprovalService
         ?? customer.AccountHolders.FirstOrDefault(h =>
             h.NeedsMoa
             && h.Name.Equals(user.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>External account holder or internal LGB signatory (template/CFO/DLCM).</summary>
+    public static string? ResolveMoaSignerName(Customer customer, User user, bool allowInternalSigner)
+    {
+        var holder = FindMoaHolderForUser(customer, user);
+        if (holder != null)
+            return holder.Name.Trim();
+
+        if (allowInternalSigner && (user.IsInternalSignatory || user.CanApproveMoa))
+            return user.Name.Trim();
+
+        return null;
+    }
 
     public static bool HasSigned(List<ClientApprovalRecord> records, string holderName) =>
         records.Any(r => r.AccountHolderName.Equals(holderName, StringComparison.OrdinalIgnoreCase));

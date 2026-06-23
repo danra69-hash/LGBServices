@@ -41,6 +41,24 @@ public class UsersController : ControllerBase
         return users.Select(u => UserMapper.ToResponse(u)).ToList();
     }
 
+    /// <summary>LGB internal staff for MOA prep fields and similar pickers (no client users).</summary>
+    [HttpGet("internal-directory")]
+    public async Task<ActionResult<IEnumerable<AssignableUserDto>>> GetInternalDirectory()
+    {
+        if (!AuthHelper.IsInternalStaff(User))
+            return Forbid();
+
+        var users = await _context.Users
+            .AsNoTracking()
+            .Where(u => u.CustomerId == null
+                && (u.Role == UserRoles.Admin || u.Role == UserRoles.User))
+            .OrderBy(u => u.Name)
+            .Select(u => new AssignableUserDto { UserId = u.UserId, Name = u.Name })
+            .ToListAsync();
+
+        return users;
+    }
+
     [HttpGet("me")]
     public async Task<ActionResult<UserResponse>> GetCurrentUser()
     {
@@ -58,7 +76,7 @@ public class UsersController : ControllerBase
         return UserMapper.ToResponse(user, user.Customer);
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{id:int}")]
     public async Task<ActionResult<UserResponse>> GetUser(int id)
     {
         if (!AuthHelper.CanManageUsers(User))

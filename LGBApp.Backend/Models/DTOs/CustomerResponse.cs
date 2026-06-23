@@ -22,6 +22,7 @@ public class CustomerResponse
     public List<string> LoaHolders { get; set; } = new();
     public string? MoiFormTemplateCode { get; set; }
     public string? MoaFormTemplateCode { get; set; }
+    public string? MoaWorkflowTemplateCode { get; set; }
     public List<string> Moi { get; set; } = new();
     public List<string> MoiApproval { get; set; } = new();
     /// <summary>AllRequired | AnyOne — MOI only; MOA always requires all signers.</summary>

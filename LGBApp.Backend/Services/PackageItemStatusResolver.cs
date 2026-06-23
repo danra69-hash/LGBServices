@@ -9,8 +9,65 @@ public static class PackageItemStatusResolver
         JobRequestUnit unit,
         MOIForm? moiForm = null)
     {
-        var handoff = job.TotalQty > 1 ? unit.InternalHandoffStatus : job.InternalHandoffStatus;
-        return ResolveMoiWithHandoff(job, moiForm, handoff);
+        var handoff = job.TotalQty > 1
+            ? (unit.InternalHandoffStatus ?? string.Empty)
+            : (!string.IsNullOrWhiteSpace(unit.InternalHandoffStatus)
+                ? unit.InternalHandoffStatus
+                : job.InternalHandoffStatus ?? string.Empty);
+
+        if (IsMoaPostApprovalHandoff(handoff))
+        {
+            return ResolveMoaHandoff(job, moiForm, handoff);
+        }
+
+        return ResolveMoiWithHandoff(job, moiForm, handoff, unit);
+    }
+
+    private static bool IsMoaPostApprovalHandoff(string handoff) =>
+        handoff is JobHandoffStatuses.ReadyForMoa
+            or JobHandoffStatuses.MoaCirculation
+            or JobHandoffStatuses.PendingExecute
+            or JobHandoffStatuses.ExecutionSecComplete
+            or JobHandoffStatuses.Completed;
+
+    private static PackageItemStatusResult ResolveMoaHandoff(
+        JobRequest job,
+        MOIForm? moi,
+        string handoff)
+    {
+        handoff = NormalizeLegacyHandoff(handoff);
+        if (string.Equals(job.Status, "Completed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(handoff, JobHandoffStatuses.Completed, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.Completed);
+
+        if (handoff is JobHandoffStatuses.PendingExecute or JobHandoffStatuses.ExecutionSecComplete)
+            return Result(PackageItemStatuses.Execution);
+
+        if (string.Equals(handoff, JobHandoffStatuses.MoaCirculation, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.MoaCirculation);
+
+        if (string.Equals(handoff, JobHandoffStatuses.ReadyForMoa, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.ReadyForMoa);
+
+        if (string.Equals(handoff, JobHandoffStatuses.MoaSharonApproved, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.MoiSignOff);
+
+        if (string.Equals(handoff, JobHandoffStatuses.AdminReview, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.MoiSignOff);
+
+        if (handoff is JobHandoffStatuses.PendingPrep or JobHandoffStatuses.ResoInProgress)
+        {
+            if (moi != null
+                && string.Equals(moi.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase))
+                return Result(PackageItemStatuses.MoiApproved);
+            return Result(PackageItemStatuses.ResolutionPrep);
+        }
+
+        if (moi == null
+            || !string.Equals(moi.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.MoiNotComplete);
+
+        return Result(PackageItemStatuses.MoiApproved);
     }
 
     public static PackageItemStatusResult Resolve(
@@ -64,9 +121,18 @@ public static class PackageItemStatusResolver
     private static PackageItemStatusResult ResolveMoiWithHandoff(
         JobRequest job,
         MOIForm? form,
-        string handoff)
+        string handoff,
+        JobRequestUnit? unit = null)
     {
-        if (string.Equals(job.Status, "Completed", StringComparison.OrdinalIgnoreCase))
+        handoff = NormalizeLegacyHandoff(handoff);
+        if (job.TotalQty <= 1
+            && string.Equals(job.Status, "Completed", StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.Completed);
+
+        if (unit != null
+            && job.TotalQty > 1
+            && (string.Equals(unit.InternalHandoffStatus, JobHandoffStatuses.Completed, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(unit.Status, "Completed", StringComparison.OrdinalIgnoreCase)))
             return Result(PackageItemStatuses.Completed);
 
         if (form != null)
@@ -79,6 +145,9 @@ public static class PackageItemStatusResolver
         if (string.Equals(handoff, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.AwaitingIntake);
 
+        if (string.Equals(handoff, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.ResolutionPrep);
+
         if (handoff is JobHandoffStatuses.PendingPrep or JobHandoffStatuses.ResoInProgress)
             return Result(PackageItemStatuses.ResolutionPrep);
 
@@ -87,6 +156,9 @@ public static class PackageItemStatusResolver
 
         if (handoff is JobHandoffStatuses.ReadyForMoa or JobHandoffStatuses.MoaCirculation)
             return Result(PackageItemStatuses.MoiApproved);
+
+        if (handoff is JobHandoffStatuses.PendingExecute or JobHandoffStatuses.ExecutionSecComplete)
+            return Result(PackageItemStatuses.Execution);
 
         if (string.Equals(handoff, JobHandoffStatuses.Completed, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.Completed);
@@ -110,6 +182,8 @@ public static class PackageItemStatusResolver
 
         return workflowState switch
         {
+            MoiWorkflowStates.Approved when handoff == JobHandoffStatuses.AwaitingSecAssignment
+                => Result(PackageItemStatuses.ResolutionPrep),
             MoiWorkflowStates.Approved => Result(PackageItemStatuses.MoiApproved),
             MoiWorkflowStates.PendingClientMoiApproval => Result(PackageItemStatuses.PendingSignOff),
             MoiWorkflowStates.PendingRecommendation => Result(PackageItemStatuses.PendingRecommendation),
@@ -150,11 +224,11 @@ public static class PackageItemStatusResolver
             || string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.Completed, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.Completed);
 
-        if (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.PendingExecute, StringComparison.OrdinalIgnoreCase))
-            return Result(PackageItemStatuses.PendingExecute);
-
         if (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.MoaCirculation, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.MoaCirculation);
+
+        if (job.InternalHandoffStatus is JobHandoffStatuses.PendingExecute or JobHandoffStatuses.ExecutionSecComplete)
+            return Result(PackageItemStatuses.Execution);
 
         if (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.ReadyForMoa, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.ReadyForMoa);
@@ -165,6 +239,9 @@ public static class PackageItemStatusResolver
         if (pairedMoiForm == null
             || !string.Equals(pairedMoiForm.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.MoiNotComplete);
+
+        if (job.InternalHandoffStatus is JobHandoffStatuses.PendingPrep or JobHandoffStatuses.ResoInProgress)
+            return Result(PackageItemStatuses.MoiApproved);
 
         if (string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.AdminReview, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.MoiSignOff);
@@ -194,11 +271,14 @@ public static class PackageItemStatusResolver
     }
 
     private static bool IsMoaHandoff(string handoff) =>
-        handoff is JobHandoffStatuses.AdminReview
+        NormalizeLegacyHandoff(handoff) is JobHandoffStatuses.PendingPrep
+            or JobHandoffStatuses.ResoInProgress
+            or JobHandoffStatuses.AdminReview
             or JobHandoffStatuses.MoaSharonApproved
             or JobHandoffStatuses.ReadyForMoa
-            or JobHandoffStatuses.MoaCirculation
-            or JobHandoffStatuses.PendingExecute;
+            or JobHandoffStatuses.MoaCirculation;
+
+    private static string NormalizeLegacyHandoff(string handoff) => handoff;
 
     private static PackageItemStatusResult Result(string key) =>
         new(key, PackageItemStatuses.LabelFor(key));

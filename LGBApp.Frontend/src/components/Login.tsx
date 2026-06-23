@@ -91,12 +91,6 @@ export function Login({ onSuccess }: LoginProps) {
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
-
-          <div className="mt-6 text-center">
-            <button type="button" className="text-muted-foreground hover:text-foreground transition-colors">
-              Forgot password?
-            </button>
-          </div>
         </div>
       </div>
     </div>

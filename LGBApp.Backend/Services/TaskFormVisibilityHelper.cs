@@ -23,7 +23,19 @@ public static class TaskFormVisibilityHelper
 
     public static bool CanInternalUserSeeJob(ClaimsPrincipal user, JobRequest job)
     {
-        if (AuthHelper.IsAdmin(user) || AuthHelper.IsExternalUser(user))
+        if (AuthHelper.IsExternalUser(user))
+            return AuthHelper.CanAccessJob(user, job);
+
+        if (InternalWorkVisibilityHelper.AppliesClientReleaseGate(job)
+            && !InternalWorkVisibilityHelper.IsJobLineReleasedToInternal(job, []))
+        {
+            if (AwaitingIntakeApproval(job) && AuthHelper.CanApproveMoiIntake(user))
+                return job.TaskType is "MOI" or "MOI Approval" or "Service";
+
+            return false;
+        }
+
+        if (AuthHelper.IsAdmin(user))
             return AuthHelper.CanAccessJob(user, job);
 
         if (AwaitingIntakeApproval(job) && AuthHelper.CanApproveMoiIntake(user))
@@ -52,6 +64,10 @@ public static class TaskFormVisibilityHelper
         {
             if (!AuthHelper.CanAccessCustomer(user, job.CustomerId))
                 return false;
+
+            if (form != null
+                && string.Equals(form.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase))
+                return true;
 
             if (AuthHelper.IsClientAdmin(user))
                 return true;
@@ -86,11 +102,13 @@ public static class TaskFormVisibilityHelper
         return AuthHelper.CanAccessJob(user, job);
     }
 
-    public static bool CanViewMoaForm(ClaimsPrincipal user, JobRequest job)
+    public static bool CanViewMoaForm(ClaimsPrincipal user, JobRequest job, MOAForm? moa = null, MOIForm? moi = null)
     {
+        var handoff = ResolveMoaHandoffStatus(job, moa);
+
         if (AuthHelper.IsClientSignatory(user))
         {
-            if (!IsMoaPhaseForClient(job.InternalHandoffStatus))
+            if (!IsMoaPhaseForClient(handoff))
                 return false;
             return AuthHelper.CanAccessCustomer(user, job.CustomerId);
         }
@@ -99,7 +117,7 @@ public static class TaskFormVisibilityHelper
         {
             if (!AuthHelper.CanAccessCustomer(user, job.CustomerId))
                 return false;
-            return IsMoaPhaseForClient(job.InternalHandoffStatus);
+            return IsMoaPhaseForClient(handoff);
         }
 
         if (AuthHelper.IsAdmin(user))
@@ -111,21 +129,37 @@ public static class TaskFormVisibilityHelper
         if (job.TaskType is not ("MOA" or "Service"))
             return false;
 
-        if (!IsMoaPhase(job.InternalHandoffStatus))
+        if (!IsEffectiveMoaPhase(handoff, moi))
             return false;
 
         if (AuthHelper.CanApproveMoa(user))
             return true;
 
-        return AuthHelper.CanAccessJob(user, job);
+        return AuthHelper.IsAssignedToJob(user, job, moa?.JobRequestUnitId);
     }
 
-    public static bool CanEditMoaForm(ClaimsPrincipal user, JobRequest job, bool workflowStarted)
+    public static bool CanEditMoaForm(
+        ClaimsPrincipal user,
+        JobRequest job,
+        MOAForm? moa = null,
+        MOIForm? moi = null,
+        bool workflowStarted = false)
     {
         if (AuthHelper.IsClientAdmin(user) || AuthHelper.IsClientSignatory(user))
             return false;
 
-        if (!CanViewMoaForm(user, job))
+        if (!CanViewMoaForm(user, job, moa, moi))
+            return false;
+
+        var handoff = ResolveMoaHandoffStatus(job, moa);
+        if (handoff is JobHandoffStatuses.MoaSharonApproved
+            or JobHandoffStatuses.ReadyForMoa
+            or JobHandoffStatuses.MoaCirculation)
+            return false;
+
+        if (handoff == JobHandoffStatuses.AdminReview
+            && !AuthHelper.CanApproveMoa(user)
+            && !AuthHelper.IsAdmin(user))
             return false;
 
         if (workflowStarted)
@@ -133,7 +167,7 @@ public static class TaskFormVisibilityHelper
 
         return AuthHelper.IsAdmin(user)
             || AuthHelper.CanApproveMoa(user)
-            || AuthHelper.CanAccessJob(user, job);
+            || AuthHelper.IsAssignedToJob(user, job, moa?.JobRequestUnitId);
     }
 
     public static bool CanEditMoiForm(ClaimsPrincipal user, JobRequest job, string workflowState)
@@ -160,37 +194,74 @@ public static class TaskFormVisibilityHelper
         return workflowState is MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation;
     }
 
+    public static bool ShouldPreferMoaOverMoi(JobRequest job, MOIForm? moi, string? handoff = null)
+    {
+        if (!string.Equals(job.TaskType, "Service", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var effectiveHandoff = handoff ?? job.InternalHandoffStatus ?? string.Empty;
+        if (IsMoaPhase(effectiveHandoff))
+            return true;
+
+        return moi?.WorkflowState is MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation
+            && effectiveHandoff != JobHandoffStatuses.ClientSubmitted
+            && moi.WorkflowState != MoiWorkflowStates.PendingAdminIntake
+            || (string.Equals(moi?.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase)
+                && effectiveHandoff is JobHandoffStatuses.AwaitingSecAssignment or JobHandoffStatuses.PendingPrep);
+    }
+
     public static (string? Kind, int? Id) ResolveVisibleFormLink(
         ClaimsPrincipal user,
         JobRequest job,
         MOIForm? moi,
         MOAForm? moa)
     {
-        if (moa != null && CanViewMoaForm(user, job))
+        if (moa != null && CanViewMoaForm(user, job, moa))
             return ("MOA", moa.MOAFormId);
+
+        if (ShouldPreferMoaOverMoi(job, moi))
+            return (null, null);
 
         if (job.TaskType is "MOI" or "MOI Approval" or "Service"
             && moi != null
             && CanViewMoiForm(user, job, moi))
             return ("MOI", moi.MOIFormId);
 
-        if (job.TaskType == "MOA" && moa != null && CanViewMoaForm(user, job))
+        if (job.TaskType == "MOA" && moa != null && CanViewMoaForm(user, job, moa))
             return ("MOA", moa.MOAFormId);
 
         return (null, null);
     }
 
     private static bool IsMoaPhase(string handoff) =>
-        handoff is JobHandoffStatuses.MoaSharonApproved
+        handoff is JobHandoffStatuses.PendingPrep
+            or JobHandoffStatuses.ResoInProgress
+            or JobHandoffStatuses.AdminReview
+            or JobHandoffStatuses.MoaSharonApproved
             or JobHandoffStatuses.ReadyForMoa
             or JobHandoffStatuses.MoaCirculation
             or JobHandoffStatuses.PendingExecute
-            or JobHandoffStatuses.Completed
-            or JobHandoffStatuses.AdminReview;
+            or JobHandoffStatuses.ExecutionSecComplete
+            or JobHandoffStatuses.Completed;
+
+    private static bool IsEffectiveMoaPhase(string handoff, MOIForm? moi) =>
+        IsMoaPhase(handoff)
+        || (moi?.WorkflowState is MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation
+            && handoff != JobHandoffStatuses.ClientSubmitted
+            && moi.WorkflowState != MoiWorkflowStates.PendingAdminIntake)
+        || (string.Equals(moi?.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase)
+            && handoff is JobHandoffStatuses.AwaitingSecAssignment or JobHandoffStatuses.PendingPrep);
 
     private static bool IsMoaPhaseForClient(string handoff) =>
         handoff is JobHandoffStatuses.ReadyForMoa
             or JobHandoffStatuses.MoaCirculation
             or JobHandoffStatuses.PendingExecute
+            or JobHandoffStatuses.ExecutionSecComplete
             or JobHandoffStatuses.Completed;
+
+    private static string ResolveMoaHandoffStatus(JobRequest job, MOAForm? moa)
+    {
+        var unit = JobHandoffResolver.ResolveUnit(job, null, moa);
+        return JobHandoffResolver.ResolveEffectiveHandoff(job, unit, moa);
+    }
 }

@@ -8,6 +8,7 @@ public static class PackageItemStatuses
     public const string ResolutionPrep = "resolution_prep";
     public const string PendingRecommendation = "pending_recommendation";
     public const string MoiSignOff = "moi_sign_off";
+    public const string AwaitingSecAssignment = "awaiting_sec_assignment";
     public const string MoiApproved = "moi_approved";
     public const string Completed = "completed";
 
@@ -19,6 +20,8 @@ public static class PackageItemStatuses
     public const string ReadyForMoa = "ready_for_moa";
     public const string MoaCirculation = "moa_circulation";
     public const string PendingExecute = "pending_execute";
+    public const string Execution = "execution";
+    public const string ExecutionPendingApproval = "execution_pending_approval";
 
     public const string NotStarted = "not_started";
     public const string InProgress = "in_progress";
@@ -32,6 +35,7 @@ public static class PackageItemStatuses
         [ResolutionPrep] = "Resolution prep",
         [PendingRecommendation] = "Pending recommendation",
         [MoiSignOff] = "MOI sign-off",
+        [AwaitingSecAssignment] = "Assign secretarial team",
         [MoiApproved] = "MOI approved",
         [Completed] = "Completed",
         [AwaitingMoi] = "Awaiting MOI",
@@ -40,7 +44,9 @@ public static class PackageItemStatuses
         [MoiNotComplete] = "MOI not complete",
         [ReadyForMoa] = "Ready for MOA",
         [MoaCirculation] = "MOA circulation",
-        [PendingExecute] = "Pending execute",
+        [PendingExecute] = "Executing",
+        [Execution] = "Executing",
+        [ExecutionPendingApproval] = "Awaiting execution sign-off",
         [NotStarted] = "Not started",
         [InProgress] = "In progress",
         [Canceled] = "Canceled",

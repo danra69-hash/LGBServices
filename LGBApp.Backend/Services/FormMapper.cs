@@ -24,7 +24,7 @@ public static class FormMapper
             MoiFormId = null,
             Workflow = workflow,
             CreatedAt = form.CreatedAt.ToString("yyyy-MM-dd"),
-            UpdatedAt = form.UpdatedAt.ToString("yyyy-MM-dd"),
+            UpdatedAt = form.UpdatedAt.ToString("O"),
         }, form, customer);
 
     public static FormResponse ToMoaResponse(
@@ -60,10 +60,22 @@ public static class FormMapper
             },
             PackValidationErrors = isValid ? null : errors,
             SharonApprovedAt = form.SharonApprovedAt?.ToString("yyyy-MM-dd"),
+            SubmittedForAdminReviewAt = form.SubmittedForAdminReviewAt?.ToString("yyyy-MM-dd"),
             Workflow = workflow,
             CreatedAt = form.CreatedAt.ToString("yyyy-MM-dd"),
-            UpdatedAt = form.UpdatedAt.ToString("yyyy-MM-dd"),
+            UpdatedAt = form.UpdatedAt.ToString("O"),
+            UnitNumber = ReadMoaUnitNumber(form),
+            JobRequestUnitId = form.JobRequestUnitId,
         }, form, customer);
+    }
+
+    private static int? ReadMoaUnitNumber(MOAForm form)
+    {
+        var data = JsonHelper.Deserialize<Dictionary<string, object?>>(form.FormDataJson);
+        if (data.TryGetValue("unitNumber", out var raw) && raw != null
+            && int.TryParse(raw.ToString(), out var n))
+            return n;
+        return null;
     }
 
     private static int? ReadUnitNumber(MOIForm form)
@@ -84,6 +96,8 @@ public static class FormMapper
             AccountHolderName = r.AccountHolderName,
             Comments = r.Comments,
             SignedAt = r.SignedAt.ToString("yyyy-MM-dd"),
+            SignatureFileName = r.SignatureFileName,
+            SignatureDataUrl = r.SignatureDataUrl,
         }).ToList();
 
         if (customer != null)
@@ -117,6 +131,8 @@ public static class FormMapper
             AccountHolderName = r.AccountHolderName,
             Comments = r.Comments,
             SignedAt = r.SignedAt.ToString("yyyy-MM-dd"),
+            SignatureFileName = r.SignatureFileName,
+            SignatureDataUrl = r.SignatureDataUrl,
         }).ToList();
 
         if (customer != null)

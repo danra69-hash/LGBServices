@@ -143,7 +143,27 @@ public static class AuthHelper
         if (!internalUserId.HasValue)
             return false;
 
-        if (job.Units.Any(u => JobRequestUnitService.IsUserAssigned(u, internalUserId.Value)))
+        return IsAssignedToJob(user, job);
+    }
+
+    /// <summary>True when the user is tagged on the job unit (or legacy job assignee fields).</summary>
+    public static bool IsAssignedToJob(ClaimsPrincipal user, JobRequest job, int? jobRequestUnitId = null)
+    {
+        if (IsAdmin(user))
+            return true;
+
+        var userId = CurrentUserId(user);
+        if (!userId.HasValue)
+            return false;
+
+        if (jobRequestUnitId.HasValue)
+        {
+            var scopedUnit = job.Units.FirstOrDefault(u => u.JobRequestUnitId == jobRequestUnitId.Value);
+            if (scopedUnit != null && JobRequestUnitService.IsUserAssigned(scopedUnit, userId.Value))
+                return true;
+        }
+
+        if (job.Units.Any(u => JobRequestUnitService.IsUserAssigned(u, userId.Value)))
             return true;
 
         return CanAccessJob(user, job.AssignedUserId, job.JobAssignedTo);

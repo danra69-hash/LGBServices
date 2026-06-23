@@ -22,6 +22,7 @@ public class FormResponse
     public List<string>? RequiredApprovers { get; set; }
     public List<string>? PendingApprovers { get; set; }
     public string? SharonApprovedAt { get; set; }
+    public string? SubmittedForAdminReviewAt { get; set; }
     public string CreatedAt { get; set; } = string.Empty;
     public string UpdatedAt { get; set; } = string.Empty;
 }

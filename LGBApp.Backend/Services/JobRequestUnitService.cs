@@ -181,13 +181,17 @@ public static class JobRequestUnitService
     {
         if (!unit.ScheduledDate.HasValue)
         {
-            if (unit.PackageScheduleItemId.HasValue)
-            {
-                var linked = await context.PackageScheduleItems.FindAsync(unit.PackageScheduleItemId.Value);
-                if (linked != null)
-                    context.PackageScheduleItems.Remove(linked);
-                unit.PackageScheduleItemId = null;
-            }
+            await RemoveLinkedScheduleItemAsync(context, unit);
+            return;
+        }
+
+        var mois = await context.MOIForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .ToListAsync();
+        var moi = InternalWorkVisibilityHelper.ResolveMoiForUnit(mois, unit, job);
+        if (!InternalWorkVisibilityHelper.IsUnitReleasedToInternal(job, unit, moi))
+        {
+            await RemoveLinkedScheduleItemAsync(context, unit);
             return;
         }
 
@@ -256,6 +260,17 @@ public static class JobRequestUnitService
         item.JobRequestUnitId = unit.JobRequestUnitId;
     }
 
+    private static async Task RemoveLinkedScheduleItemAsync(AppDbContext context, JobRequestUnit unit)
+    {
+        if (!unit.PackageScheduleItemId.HasValue)
+            return;
+
+        var linked = await context.PackageScheduleItems.FindAsync(unit.PackageScheduleItemId.Value);
+        if (linked != null)
+            context.PackageScheduleItems.Remove(linked);
+        unit.PackageScheduleItemId = null;
+    }
+
     public static bool IsUserAssigned(JobRequestUnit unit, int userId) =>
         unit.Assignees.Any(a => a.UserId == userId) || unit.AssignedUserId == userId;
 
@@ -309,6 +324,12 @@ public static class JobRequestUnitService
             AssignedUserName = assignees.Count > 0
                 ? string.Join(", ", assignees.Select(a => a.User.Name))
                 : unit.AssignedUserName,
+            Assignees = assignees.Select(a => new UnitAssigneeDto
+            {
+                UserId = a.User.UserId,
+                UserName = a.User.Name,
+            }).ToList(),
+            InternalHandoffStatus = JobHandoffResolver.ResolveEffectiveHandoff(job, unit),
         };
     }
 }

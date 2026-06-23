@@ -18,13 +18,19 @@ import {
 } from '@/lib/api';
 import {
   canAssignSecretarialTeam,
+  canAssignUnit,
+  canMarkExecutionComplete,
   canOpenMoaForJob,
   canOpenMoaForm,
+  canShowUnitDoneButton,
   displayStatusKey,
+  displayStatusKeyForUnit,
   displayStatusLabel,
   jobHasMoaForm,
   jobHasMoiForm,
+  jobUnitsForAssignment,
   packageItemStatusBadgeClass,
+  unitIsExecuting,
 } from '@/lib/packageItemStatus';
 
 interface PackageWorkboardProps {
@@ -34,6 +40,7 @@ interface PackageWorkboardProps {
   refreshKey?: number;
   userIsAdmin?: boolean;
   canApproveIntake?: boolean;
+  canApproveMoa?: boolean;
   onBack: () => void;
   onOpenTask: (job: JobRequestResponse, unit?: JobRequestUnitDto) => void;
   onError: (message: string) => void;
@@ -55,6 +62,7 @@ export function PackageWorkboard({
   refreshKey = 0,
   userIsAdmin = false,
   canApproveIntake = false,
+  canApproveMoa = false,
   onBack,
   onOpenTask,
   onError,
@@ -168,20 +176,27 @@ export function PackageWorkboard({
           {unit.status === 'Completed' ? '✓' : '—'}
         </td>
         <td className="px-4 py-2 text-sm text-muted-foreground">
-          {formatDateDisplay(unit.scheduledDate) || '—'}
+          <div>{formatDateDisplay(unit.scheduledDate) || '—'}</div>
           <span className="block text-[10px]">Set by client</span>
+          {unit.requiredExecutionDate && (
+            <>
+              <div className="mt-1">{formatDateDisplay(unit.requiredExecutionDate)}</div>
+              <span className="block text-[10px]">Exec required</span>
+            </>
+          )}
         </td>
         <td className="px-4 py-2">
           <UserAssignCell
             unit={unit}
             users={users}
+            disabled={!canAssignUnit(job, unit, jobUnitsForAssignment(job))}
             onAdd={(userId) => void handleAssignUnit(job, unit.unitNumber, userId)}
             onRemove={(userId) => void handleAssignUnit(job, unit.unitNumber, userId, true)}
           />
         </td>
         <td className="px-4 py-2">
-          <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${packageItemStatusBadgeClass(displayStatusKey(job))}`}>
-            {displayStatusLabel(job)}
+          <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${packageItemStatusBadgeClass(unit.displayStatusKey ?? displayStatusKeyForUnit(job, unit))}`}>
+            {unit.displayStatus || displayStatusLabelForUnit(job, unit)}
           </span>
           {canApproveIntake && (unit.awaitingIntakeApproval || job.awaitingIntakeApproval) && (
             <>
@@ -269,13 +284,13 @@ export function PackageWorkboard({
               Send MOA to client
             </button>
           )}
-          {canOpenMoaForJob(job) && job.taskType === 'Service' && (
+          {canOpenMoaForJob(job, unit) && job.taskType === 'Service' && (
             <button
               type="button"
               className="text-primary hover:underline block mt-1 text-xs"
               onClick={() => onOpenTask(job, unit)}
             >
-              {jobHasMoaForm(job) ? 'Open MOA' : 'Prepare MOA'}
+              {unitIsExecuting(job, unit) || jobHasMoaForm(job) ? 'View MOA' : 'Prepare MOA'}
             </button>
           )}
         </td>
@@ -290,16 +305,17 @@ export function PackageWorkboard({
               <Undo2 className="w-3 h-3" />
               Undo
             </button>
-          ) : (
+          ) : canShowUnitDoneButton(job, unit, { isAdmin: userIsAdmin, canApproveMoa }) ? (
             <button
               type="button"
               onClick={() => handleMarkUnit(job, unit.unitNumber)}
               className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
+              title={canMarkExecutionComplete(job, unit, { isAdmin: userIsAdmin, canApproveMoa }) ? 'Mark package line completed' : undefined}
             >
               <Check className="w-3 h-3" />
-              Done
+              {canMarkExecutionComplete(job, unit, { isAdmin: userIsAdmin, canApproveMoa }) ? 'Complete' : 'Done'}
             </button>
-          )}
+          ) : null}
         </td>
       </tr>
     );
@@ -368,7 +384,7 @@ export function PackageWorkboard({
                   <th className="px-4 py-3 text-left">Component</th>
                   <th className="px-4 py-3 text-left">Send to (signer)</th>
                   <th className="px-4 py-3 text-center">Qty done</th>
-                  <th className="px-4 py-3 text-left">Scheduled date</th>
+                  <th className="px-4 py-3 text-left">Scheduled / exec</th>
                   <th className="px-4 py-3 text-left">Users</th>
                   <th className="px-4 py-3 text-left">Status</th>
                   <th className="px-4 py-3 text-right">Actions</th>

@@ -44,6 +44,7 @@ public static class CustomerMapper
             LoaHolders = JsonHelper.Deserialize<List<string>>(customer.LoaHoldersJson),
             MoiFormTemplateCode = customer.MoiFormTemplateCode,
             MoaFormTemplateCode = customer.MoaFormTemplateCode,
+            MoaWorkflowTemplateCode = customer.MoaWorkflowTemplateCode,
             Moi = JsonHelper.Deserialize<List<string>>(customer.MoiJson),
             MoiApproval = JsonHelper.Deserialize<List<string>>(customer.MoiApprovalJson),
             MoiApprovalMode = string.IsNullOrWhiteSpace(customer.MoiApprovalMode)
@@ -114,6 +115,7 @@ public static class CustomerMapper
             LoaHoldersJson = JsonHelper.Serialize(request.LoaHolders ?? new List<string>()),
             MoiFormTemplateCode = request.MoiFormTemplateCode,
             MoaFormTemplateCode = request.MoaFormTemplateCode,
+            MoaWorkflowTemplateCode = request.MoaWorkflowTemplateCode,
             MoiJson = JsonHelper.Serialize(moi),
             MoiApprovalJson = JsonHelper.Serialize(moiApproval),
             MoaJson = JsonHelper.Serialize(moa),
@@ -163,6 +165,7 @@ public static class CustomerMapper
         customer.LoaHoldersJson = JsonHelper.Serialize(request.LoaHolders);
         customer.MoiFormTemplateCode = request.MoiFormTemplateCode;
         customer.MoaFormTemplateCode = request.MoaFormTemplateCode;
+        customer.MoaWorkflowTemplateCode = request.MoaWorkflowTemplateCode;
         customer.MoiJson = JsonHelper.Serialize(request.Moi);
         customer.MoiApprovalJson = JsonHelper.Serialize(request.MoiApproval);
         customer.MoaJson = JsonHelper.Serialize(request.Moa);

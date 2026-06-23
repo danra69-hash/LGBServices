@@ -19,10 +19,13 @@ public class UpdateMoaPackRequest
     public bool FinanceRelated { get; set; }
     public bool BankSignatoryMatter { get; set; }
     public bool ShareMovement { get; set; }
+    public string? ExpectedUpdatedAt { get; set; }
 }
 
 public class JobHandoffRequest
 {
     public string Action { get; set; } = string.Empty;
     public string? Comments { get; set; }
+    /// <summary>Required for multi-session service lines (Board meeting #2, etc.).</summary>
+    public int? UnitNumber { get; set; }
 }

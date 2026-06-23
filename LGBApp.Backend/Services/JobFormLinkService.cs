@@ -125,18 +125,19 @@ public static class JobFormLinkService
             }
             else if (string.Equals(job.TaskType, "MOA", StringComparison.OrdinalIgnoreCase))
             {
-                if (moa != null && TaskFormVisibilityHelper.CanViewMoaForm(user, entity))
+                if (moa != null && TaskFormVisibilityHelper.CanViewMoaForm(user, entity, moa))
                 {
                     job.LinkedFormKind = "MOA";
                     job.LinkedFormId = moa.MOAFormId;
                 }
             }
-            else if (moa != null && TaskFormVisibilityHelper.CanViewMoaForm(user, entity))
+            else if (moa != null && TaskFormVisibilityHelper.CanViewMoaForm(user, entity, moa))
             {
                 job.LinkedFormKind = "MOA";
                 job.LinkedFormId = moa.MOAFormId;
             }
-            else if (job.TaskType is "MOI" or "MOI Approval" or "Service")
+            else if (!TaskFormVisibilityHelper.ShouldPreferMoaOverMoi(entity, moi)
+                && job.TaskType is "MOI" or "MOI Approval" or "Service")
             {
                 var moiForLink = job.TaskType is "MOI" or "Service" ? moi : pairedMoiForm != null
                     ? moiForms.FirstOrDefault(f => f.MOIFormId == pairedMoiForm.MOIFormId)
@@ -212,7 +213,9 @@ public static class JobFormLinkService
 
             unitDto.HasMoiForm = moi != null;
             unitDto.HasMoaForm = moa != null;
+            unitDto.MoiFormId = moi?.MOIFormId;
             unitDto.MoiWorkflowState = moi?.WorkflowState;
+            unitDto.RequiredExecutionDate = MoiFormMetadataHelper.ReadRequiredExecutionDate(moi);
 
             var display = PackageItemStatusResolver.ResolveForUnit(entity, unitEntity, moi);
             unitDto.DisplayStatus = display.Label;
@@ -220,12 +223,14 @@ public static class JobFormLinkService
             unitDto.AwaitingIntakeApproval = TaskFormVisibilityHelper.UnitAwaitingIntakeApproval(unitEntity, moi);
 
             var canView = user?.Identity?.IsAuthenticated == true;
-            if (moa != null && (!canView || TaskFormVisibilityHelper.CanViewMoaForm(user!, entity)))
+            if (moa != null && (!canView || TaskFormVisibilityHelper.CanViewMoaForm(user!, entity, moa)))
             {
                 unitDto.LinkedFormKind = "MOA";
                 unitDto.LinkedFormId = moa.MOAFormId;
             }
-            else if (moi != null && (!canView || TaskFormVisibilityHelper.CanViewMoiForm(user!, entity, moi)))
+            else if (!TaskFormVisibilityHelper.ShouldPreferMoaOverMoi(entity, moi, unitEntity.InternalHandoffStatus)
+                && moi != null
+                && (!canView || TaskFormVisibilityHelper.CanViewMoiForm(user!, entity, moi)))
             {
                 unitDto.LinkedFormKind = "MOI";
                 unitDto.LinkedFormId = moi.MOIFormId;

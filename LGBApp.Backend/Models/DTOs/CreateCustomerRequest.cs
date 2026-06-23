@@ -21,6 +21,7 @@ public class CreateCustomerRequest
     public List<string>? LoaHolders { get; set; }
     public string? MoiFormTemplateCode { get; set; }
     public string? MoaFormTemplateCode { get; set; }
+    public string? MoaWorkflowTemplateCode { get; set; }
     public string? DateCreated { get; set; }
     public List<CustomerPackageInput> Packages { get; set; } = new();
     public List<AccountHolderInput> AccountHolders { get; set; } = new();

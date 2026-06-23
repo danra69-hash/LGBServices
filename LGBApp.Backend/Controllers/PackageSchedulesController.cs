@@ -55,6 +55,47 @@ public class PackageSchedulesController : ControllerBase
         }
 
         var items = await query.OrderBy(s => s.ScheduledAt).ToListAsync();
+
+        if (!AuthHelper.IsExternalUser(User))
+        {
+            var workUnitIds = items
+                .Where(i => i.ItemType == "work" && i.JobRequestUnitId.HasValue)
+                .Select(i => i.JobRequestUnitId!.Value)
+                .Distinct()
+                .ToList();
+
+            if (workUnitIds.Count > 0)
+            {
+                var units = await _context.JobRequestUnits
+                    .AsNoTracking()
+                    .Include(u => u.JobRequest)
+                    .Where(u => workUnitIds.Contains(u.JobRequestUnitId))
+                    .ToListAsync();
+
+                var jobIds = units.Select(u => u.JobRequestId).Distinct().ToList();
+                var mois = await _context.MOIForms
+                    .AsNoTracking()
+                    .Where(f => f.JobRequestId != null && jobIds.Contains(f.JobRequestId.Value))
+                    .ToListAsync();
+
+                var releasedUnitIds = units
+                    .Where(u => InternalWorkVisibilityHelper.IsUnitReleasedToInternal(
+                        u.JobRequest,
+                        u,
+                        InternalWorkVisibilityHelper.ResolveMoiForUnit(
+                            mois.Where(f => f.JobRequestId == u.JobRequestId),
+                            u,
+                            u.JobRequest)))
+                    .Select(u => u.JobRequestUnitId)
+                    .ToHashSet();
+
+                items = items
+                    .Where(i => i.ItemType != "work"
+                        || (i.JobRequestUnitId.HasValue && releasedUnitIds.Contains(i.JobRequestUnitId.Value)))
+                    .ToList();
+            }
+        }
+
         return items.Select(ToDto).ToList();
     }
 

@@ -48,6 +48,11 @@ public static class JobRequestSyncService
         await RemoveLegacyFormJobsAsync(context, customer);
         foreach (var package in customer.Packages)
             await SyncPackageServiceJobsAsync(context, customer, package, productsByName);
+
+        var serviceJobs = await context.JobRequests
+            .Where(j => j.CustomerId == customer.CustomerId && j.TaskType == "Service")
+            .ToListAsync();
+        await JobFormProvisioner.EnsureFormsForJobsAsync(context, serviceJobs);
     }
 
     /// <summary>
@@ -72,11 +77,24 @@ public static class JobRequestSyncService
         CustomerPackage package,
         Dictionary<string, Product> productsByName)
     {
-        if (!productsByName.TryGetValue(package.PackageName, out var product))
-            return;
+        Dictionary<string, int> serviceQuantities;
+        Dictionary<string, int> addOnQuantities;
 
-        var serviceQuantities = JsonHelper.Deserialize<Dictionary<string, int>>(product.ServiceQuantitiesJson);
-        var addOnQuantities = JsonHelper.Deserialize<Dictionary<string, int>>(product.AddOnQuantitiesJson);
+        if (CustomerPackageNames.IsAddOnsOnly(package.PackageName))
+        {
+            serviceQuantities = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            addOnQuantities = ResolveCustomerAddOnQuantities(package);
+        }
+        else if (!productsByName.TryGetValue(package.PackageName, out var product))
+        {
+            return;
+        }
+        else
+        {
+            serviceQuantities = JsonHelper.Deserialize<Dictionary<string, int>>(product.ServiceQuantitiesJson);
+            var productAddOnQuantities = JsonHelper.Deserialize<Dictionary<string, int>>(product.AddOnQuantitiesJson);
+            addOnQuantities = ResolveAddOnQuantities(package, productAddOnQuantities);
+        }
 
         var desired = new List<(string Service, int Qty)>();
         foreach (var (service, qty) in serviceQuantities.Where(kv => kv.Value > 0))
@@ -133,6 +151,45 @@ public static class JobRequestSyncService
         }
 
         RemoveDuplicateJobs(context, existing);
+    }
+
+    /// <summary>
+    /// Customer package add-ons (PricingJson) override catalog bundled quantities when qty &gt; 0;
+    /// otherwise fall back to the product template bundled add-ons.
+    /// </summary>
+    internal static Dictionary<string, int> ResolveAddOnQuantities(
+        CustomerPackage package,
+        Dictionary<string, int> productAddOnQuantities)
+    {
+        var customerLines = ResolveCustomerAddOnQuantities(package);
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var allNames = productAddOnQuantities.Keys.Union(customerLines.Keys, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in allNames)
+        {
+            if (customerLines.TryGetValue(name, out var customerQty) && customerQty > 0)
+            {
+                result[name] = customerQty;
+                continue;
+            }
+
+            if (productAddOnQuantities.TryGetValue(name, out var productQty) && productQty > 0)
+                result[name] = productQty;
+        }
+
+        return result;
+    }
+
+    internal static Dictionary<string, int> ResolveCustomerAddOnQuantities(CustomerPackage package)
+    {
+        var pricing = string.IsNullOrWhiteSpace(package.PricingJson) || package.PricingJson == "{}"
+            ? new Models.DTOs.PackagePricingDto()
+            : JsonHelper.Deserialize<Models.DTOs.PackagePricingDto>(package.PricingJson);
+
+        return (pricing.AddOnLines ?? [])
+            .Where(l => !string.IsNullOrWhiteSpace(l.Name) && l.Qty > 0)
+            .GroupBy(l => l.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Qty, StringComparer.OrdinalIgnoreCase);
     }
 
     private static void RemoveDuplicateJobs(AppDbContext context, List<JobRequest> existing)

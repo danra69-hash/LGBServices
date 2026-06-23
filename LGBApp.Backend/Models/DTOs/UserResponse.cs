@@ -22,4 +22,6 @@ public class UserResponse
     public bool MustChangePassword { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<SignatoryCompanyAccessDto>? AccessibleCompanies { get; set; }
+    /// <summary>Account-holder names linked to this signatory across all companies.</summary>
+    public List<string>? SignatoryHolderNames { get; set; }
 }

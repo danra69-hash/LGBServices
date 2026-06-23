@@ -8,15 +8,18 @@ import {
   type DivisionGroupDto,
   type ProductResponse,
 } from '@/lib/api';
+import { MOA_WORKFLOW_TEMPLATES } from '@/lib/moaTemplateSections';
 import {
   ADD_ON_CATALOG,
   ADD_ON_UNIT_PRICE,
+  ADDONS_ONLY_PACKAGE_NAME,
   type AddOnLine,
   addOnLineSubtotal,
   buildCustomerAddOnLines,
   buildPricingFromProduct,
   computePackageValue,
   inferValidity,
+  isAddonsOnlyPackageName,
   scaledBasePackagePrice,
 } from '@/lib/packagePricing';
 
@@ -32,7 +35,7 @@ interface AccountHolder {
 
 interface PackageRow {
   key: number;
-  productId: number | '';
+  productId: number | '' | 'addons-only';
   packageName: string;
   packageDetail: string;
   packageValue: string;
@@ -41,6 +44,7 @@ interface PackageRow {
   status: string;
   basePackagePrice: number;
   addOnLines: AddOnLine[];
+  addonsOnly: boolean;
 }
 
 function formatProductDetail(product: ProductResponse): string {
@@ -89,6 +93,7 @@ const emptyForm = {
   loaHolders: '' as string,
   moiFormTemplateCode: '',
   moaFormTemplateCode: '',
+  moaWorkflowTemplateCode: '',
   cosec: false,
   contactName: '',
   email: '',
@@ -109,6 +114,21 @@ const defaultPackage = (): PackageRow => ({
   status: 'Active',
   basePackagePrice: 0,
   addOnLines: buildCustomerAddOnLines(),
+  addonsOnly: false,
+});
+
+const defaultAddonsOnlyPackage = (key = Date.now()): PackageRow => recalcPackageValue({
+  key,
+  productId: 'addons-only',
+  packageName: ADDONS_ONLY_PACKAGE_NAME,
+  packageDetail: 'Optional services only — no base COSEC package.',
+  packageValue: '',
+  validity: '1 Year',
+  purchasedDate: todayIso(),
+  status: 'Active',
+  basePackagePrice: 0,
+  addOnLines: buildCustomerAddOnLines(),
+  addonsOnly: true,
 });
 
 export function CreateCustomerModal({
@@ -148,6 +168,7 @@ export function CreateCustomerModal({
         loaHolders: (initialData.loaHolders ?? []).join(', '),
         moiFormTemplateCode: initialData.moiFormTemplateCode ?? '',
         moaFormTemplateCode: initialData.moaFormTemplateCode ?? '',
+        moaWorkflowTemplateCode: initialData.moaWorkflowTemplateCode ?? '',
         cosec: initialData.cosec,
         contactName: initialData.name,
         email: initialData.email,
@@ -168,10 +189,11 @@ export function CreateCustomerModal({
               const addOnLines = buildCustomerAddOnLines(pricing?.addOnLines);
               const basePackagePrice =
                 pricing?.basePackagePrice ?? Number(matched?.packagePrice ?? p.packageValue ?? 0);
+              const addonsOnly = isAddonsOnlyPackageName(p.packageName);
 
               return recalcPackageValue({
                 key: p.id,
-                productId: matched?.id ?? '',
+                productId: addonsOnly ? 'addons-only' : (matched?.id ?? ''),
                 packageName: p.packageName,
                 packageDetail: p.packageDetail ?? (matched ? formatProductDetail(matched) : ''),
                 packageValue: String(p.packageValue),
@@ -180,6 +202,7 @@ export function CreateCustomerModal({
                 status: p.status,
                 basePackagePrice,
                 addOnLines,
+                addonsOnly,
               });
             })
           : [
@@ -194,6 +217,7 @@ export function CreateCustomerModal({
                 status: 'Active',
                 basePackagePrice: Number(initialData.packageValue ?? 0),
                 addOnLines: buildCustomerAddOnLines(),
+                addonsOnly: false,
               }),
             ];
       setPackages(pkgList);
@@ -284,6 +308,19 @@ export function CreateCustomerModal({
         packageValue: '',
         basePackagePrice: 0,
         addOnLines: buildCustomerAddOnLines(),
+        addonsOnly: false,
+      }));
+      return;
+    }
+    if (productId === 'addons-only') {
+      updatePackage(key, (row) => recalcPackageValue({
+        ...row,
+        productId: 'addons-only',
+        addonsOnly: true,
+        packageName: ADDONS_ONLY_PACKAGE_NAME,
+        packageDetail: 'Optional services only — no base COSEC package.',
+        basePackagePrice: 0,
+        addOnLines: buildCustomerAddOnLines(row.addOnLines),
       }));
       return;
     }
@@ -294,11 +331,19 @@ export function CreateCustomerModal({
       return recalcPackageValue({
         ...row,
         productId: product.id,
+        addonsOnly: false,
         packageName: product.packageName,
         packageDetail: formatProductDetail(product),
         basePackagePrice: pricing.basePackagePrice,
         addOnLines: buildCustomerAddOnLines(row.addOnLines),
       });
+    });
+  };
+
+  const handleBasePriceChange = (key: number, raw: string) => {
+    updatePackage(key, (row) => {
+      const basePackagePrice = Math.max(0, Number.parseFloat(raw) || 0);
+      return recalcPackageValue({ ...row, basePackagePrice });
     });
   };
 
@@ -315,6 +360,20 @@ export function CreateCustomerModal({
     if (invoiceByPartyIds.length === 0 || chargeToPartyIds.length === 0) {
       setSubmitError('Select at least one Invoice By and one Charge To entry.');
       return;
+    }
+    for (const pkg of packages) {
+      if (formData.cosec && !pkg.addonsOnly && pkg.productId === '') {
+        setSubmitError('Select a product package for each package row (COSEC customers).');
+        return;
+      }
+      if (!formData.cosec && pkg.productId === '') {
+        setSubmitError('Select a product package or Add-ons only for each package row.');
+        return;
+      }
+      if (pkg.addonsOnly && pkg.addOnLines.every((line) => line.qty <= 0)) {
+        setSubmitError('Add at least one add-on quantity for add-ons only packages.');
+        return;
+      }
     }
     setSubmitting(true);
     setSubmitError('');
@@ -398,11 +457,26 @@ export function CreateCustomerModal({
                   <input
                     type="checkbox"
                     checked={formData.cosec}
-                    onChange={(e) => setFormData({ ...formData, cosec: e.target.checked })}
+                    onChange={(e) => {
+                      const cosec = e.target.checked;
+                      setFormData({ ...formData, cosec });
+                      if (cosec) {
+                        setPackages((rows) => rows.map((row) => (
+                          row.addonsOnly
+                            ? recalcPackageValue({ ...defaultPackage(), key: row.key })
+                            : row
+                        )));
+                      }
+                    }}
                     className="w-4 h-4"
                   />
                   <span>COSEC</span>
                 </label>
+                {!formData.cosec && (
+                  <p className="text-xs text-muted-foreground">
+                    Non-COSEC customers can use <span className="font-medium">Add-ons only</span> with no base package, or pick a catalog package and adjust fees below.
+                  </p>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -418,6 +492,21 @@ export function CreateCustomerModal({
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="block mb-2">MOA workflow template</label>
+                    <select
+                      value={formData.moaWorkflowTemplateCode}
+                      onChange={(e) => setFormData({ ...formData, moaWorkflowTemplateCode: e.target.value })}
+                      className="w-full px-3 py-2 border border-border rounded-lg bg-input-background"
+                    >
+                      {MOA_WORKFLOW_TEMPLATES.map((t) => (
+                        <option key={t.code || 'default'} value={t.code}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="flex items-end">
                     <label className="flex items-center gap-2 cursor-pointer pb-2">
                       <input
@@ -619,13 +708,18 @@ export function CreateCustomerModal({
                 </button>
               </div>
               <p className="text-sm text-muted-foreground mb-4">
-                Pick a package from Products (fixed catalog price and included services). Optional
-                add-ons below are extra services the customer can purchase on top — not part of the
-                package definition.
+                {formData.cosec
+                  ? 'Pick a package from Products (fixed catalog price and included services). Optional add-ons below are extra services on top — not part of the package definition.'
+                  : 'Choose a catalog package or Add-ons only (no base package). You can override the annual package fee before saving.'}
               </p>
-              {products.length === 0 && (
+              {products.length === 0 && formData.cosec && (
                 <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
                   No products in the catalog yet. Add products under the Products tab first.
+                </p>
+              )}
+              {products.length === 0 && !formData.cosec && (
+                <p className="text-sm text-muted-foreground border border-border rounded-lg px-3 py-2 mb-4">
+                  No catalog products yet — you can still create this customer with <span className="font-medium">Add-ons only</span>.
                 </p>
               )}
               <div className="space-y-4">
@@ -645,14 +739,18 @@ export function CreateCustomerModal({
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Product package *</label>
+                        <label className="block text-xs text-muted-foreground mb-1">
+                          {formData.cosec ? 'Product package *' : 'Package type *'}
+                        </label>
                         <select
-                          required
                           value={pkg.productId === '' ? '' : String(pkg.productId)}
                           onChange={(e) => handleProductSelect(pkg.key, e.target.value)}
                           className="w-full px-3 py-2 border border-border rounded-lg bg-input-background"
                         >
-                          <option value="">Select a product</option>
+                          <option value="">Select…</option>
+                          {!formData.cosec && (
+                            <option value="addons-only">{ADDONS_ONLY_PACKAGE_NAME}</option>
+                          )}
                           {[...products].sort((a, b) => (a.packagePrice ?? 0) - (b.packagePrice ?? 0)).map((product) => (
                             <option key={product.id} value={product.id}>
                               {product.packageName} — MYR {productBasePrice(product).toLocaleString()}/yr
@@ -671,7 +769,27 @@ export function CreateCustomerModal({
                         </div>
                       </div>
                     </div>
-                    {pkg.productId !== '' && (
+                    {pkg.productId !== '' && !pkg.addonsOnly && (
+                      <div>
+                        <label className="block text-xs text-muted-foreground mb-1">
+                          Package fee (MYR/year) — override catalog price if needed
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={pkg.basePackagePrice}
+                          onChange={(e) => handleBasePriceChange(pkg.key, e.target.value)}
+                          className="w-full md:max-w-xs px-3 py-2 border border-border rounded-lg bg-input-background text-sm"
+                        />
+                      </div>
+                    )}
+                    {pkg.addonsOnly && (
+                      <p className="text-xs text-muted-foreground">
+                        No base package fee — billing is from optional add-on quantities below.
+                      </p>
+                    )}
+                    {pkg.productId !== '' && !pkg.addonsOnly && (
                       <p className="text-xs text-muted-foreground">
                         Package MYR{' '}
                         {scaledBasePackagePrice(pkg.basePackagePrice, pkg.validity).toLocaleString(
@@ -768,11 +886,11 @@ export function CreateCustomerModal({
                             <option value="Cancelled">Cancelled</option>
                           </select>
                         </div>
-                      ) : (
+                      ) : !pkg.addonsOnly && pkg.productId !== '' ? (
                         <div className="flex items-end text-xs text-muted-foreground pb-2">
-                          Catalog package MYR {pkg.basePackagePrice.toLocaleString()}/yr
+                          Annual fee MYR {pkg.basePackagePrice.toLocaleString('en-MY', { minimumFractionDigits: 2 })}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 ))}

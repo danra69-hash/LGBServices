@@ -68,6 +68,9 @@ public static class WorkflowService
 
     public static async Task<string> ResolveMoaWorkflowTemplateCodeAsync(AppDbContext context, Customer? customer)
     {
+        if (customer != null && !string.IsNullOrWhiteSpace(customer.MoaWorkflowTemplateCode))
+            return customer.MoaWorkflowTemplateCode.Trim();
+
         if (customer == null || string.IsNullOrWhiteSpace(customer.DivisionGroupCode))
             return customer?.HasLoa == true ? "MOA_WITH_LOA" : "MOA_NO_LOA";
 
@@ -294,9 +297,26 @@ public static class WorkflowService
         ShareMovement = c.ShareMovement,
     };
 
-    public static async Task<bool> CanRecommendMoiAsync(AppDbContext context, User user, Customer customer, bool isAdmin)
+    public static async Task<bool> CanRecommendMoiAsync(
+        AppDbContext context,
+        User user,
+        Customer customer,
+        bool isAdmin,
+        JobRequest? job = null)
     {
         if (isAdmin) return true;
+
+        if (job != null)
+        {
+            await context.Entry(job).Collection(j => j.Units).LoadAsync();
+            foreach (var unit in job.Units)
+            {
+                await context.Entry(unit).Collection(u => u.Assignees).LoadAsync();
+                if (JobRequestUnitService.IsUserAssigned(unit, user.UserId))
+                    return true;
+            }
+        }
+
         if (!user.CanRecommendMoi && !IsManagerOrAbove(user.JobTitle))
             return false;
 

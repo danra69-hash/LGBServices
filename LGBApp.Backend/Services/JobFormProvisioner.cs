@@ -46,17 +46,7 @@ public static class JobFormProvisioner
             FormTemplateCode = templateCode,
             FinanceRelated = moiForm.FinanceRelated,
             BankSignatoryMatter = moiForm.BankSignatoryMatter,
-            FormDataJson = JsonHelper.Serialize(new Dictionary<string, object?>
-            {
-                ["company"] = job.Customer,
-                ["taskType"] = job.TaskType,
-                ["service"] = job.Service,
-                ["accountHolder"] = job.AccountHolder,
-                ["projectInitiator"] = job.AccountHolder,
-                ["unitNumber"] = sessionLabel > 0 ? sessionLabel : null,
-                ["sessionLabel"] = sessionLabel > 0 ? $"session {sessionLabel}" : string.Empty,
-                ["moiFormId"] = moiForm.MOIFormId,
-            }),
+            FormDataJson = JsonHelper.Serialize(BuildMoaPrefillData(job, moiForm, sessionLabel)),
             CreatedAt = now,
             UpdatedAt = now,
         });
@@ -161,18 +151,134 @@ public static class JobFormProvisioner
             MOIFormId = moiForm?.MOIFormId,
             Company = job.Customer,
             FormTemplateCode = templateCode,
-            FormDataJson = JsonHelper.Serialize(new Dictionary<string, object?>
-            {
-                ["company"] = job.Customer,
-                ["taskType"] = job.TaskType,
-                ["accountHolder"] = job.AccountHolder,
-                ["projectInitiator"] = job.AccountHolder,
-            }),
+            FinanceRelated = moiForm?.FinanceRelated ?? false,
+            BankSignatoryMatter = moiForm?.BankSignatoryMatter ?? false,
+            FormDataJson = moiForm != null
+                ? JsonHelper.Serialize(BuildMoaPrefillData(job, moiForm, 0))
+                : JsonHelper.Serialize(new Dictionary<string, object?>
+                {
+                    ["company"] = job.Customer,
+                    ["taskType"] = job.TaskType,
+                    ["service"] = job.Service,
+                    ["typeOfDocument"] = job.Service,
+                    ["accountHolder"] = job.AccountHolder,
+                    ["projectInitiator"] = job.AccountHolder,
+                }),
             CreatedAt = now,
             UpdatedAt = now,
         };
         context.MOAForms.Add(moa);
         await context.SaveChangesAsync();
+    }
+
+    public static Dictionary<string, object?> BuildMoaPrefillData(
+        JobRequest job,
+        MOIForm moiForm,
+        int sessionLabel)
+    {
+        var moiData = JsonHelper.Deserialize<Dictionary<string, object?>>(moiForm.FormDataJson);
+        var result = new Dictionary<string, object?>(moiData)
+        {
+            ["company"] = job.Customer,
+            ["taskType"] = job.TaskType,
+            ["service"] = moiData.GetValueOrDefault("service") ?? job.Service,
+            ["typeOfDocument"] = moiData.GetValueOrDefault("typeOfDocument")
+                ?? moiData.GetValueOrDefault("service")
+                ?? job.Service,
+            ["accountHolder"] = job.AccountHolder,
+            ["projectInitiator"] = moiData.GetValueOrDefault("requestedBy")
+                ?? moiData.GetValueOrDefault("projectInitiator")
+                ?? job.AccountHolder,
+            ["moiFormId"] = moiForm.MOIFormId,
+        };
+
+        if (sessionLabel > 0)
+        {
+            result["unitNumber"] = sessionLabel;
+            result["sessionLabel"] = $"session {sessionLabel}";
+        }
+
+        return result;
+    }
+
+    public static async Task<MOAForm?> FindMoaForJobAsync(
+        AppDbContext context,
+        JobRequest job,
+        int? unitNumber = null)
+    {
+        JobRequestUnit? unit = null;
+        if (unitNumber.HasValue && job.TotalQty > 1)
+            unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+
+        if (unit != null)
+        {
+            var byUnit = await context.MOAForms
+                .FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId
+                    && f.JobRequestUnitId == unit.JobRequestUnitId);
+            if (byUnit != null)
+                return byUnit;
+        }
+
+        return await context.MOAForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public static async Task<MOIForm?> FindMoiForJobAsync(
+        AppDbContext context,
+        JobRequest job,
+        int? unitNumber = null)
+    {
+        JobRequestUnit? unit = null;
+        if (unitNumber.HasValue && job.TotalQty > 1)
+            unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+
+        if (unit != null)
+        {
+            var byUnit = await context.MOIForms
+                .FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId
+                    && f.JobRequestUnitId == unit.JobRequestUnitId);
+            if (byUnit != null)
+                return byUnit;
+        }
+
+        return await context.MOIForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    public static bool IsMoiReadyForMoaProvision(MOIForm moi) =>
+        moi.WorkflowState is MoiWorkflowStates.PendingPrep
+            or MoiWorkflowStates.PendingRecommendation
+            or MoiWorkflowStates.Approved;
+
+    public static async Task<MOAForm?> EnsureMoaForJobAsync(
+        AppDbContext context,
+        JobRequest job,
+        int? unitNumber = null)
+    {
+        var existing = await FindMoaForJobAsync(context, job, unitNumber);
+        if (existing != null)
+            return existing;
+
+        var moi = await FindMoiForJobAsync(context, job, unitNumber);
+        if (moi == null || !IsMoiReadyForMoaProvision(moi))
+            return null;
+
+        await EnsureMoaFormForMoiAsync(context, job, moi);
+        return await FindMoaForJobAsync(context, job, unitNumber);
+    }
+
+    public static async Task EnsureMoaFormsForJobAsync(AppDbContext context, JobRequest job)
+    {
+        var mois = await context.MOIForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .ToListAsync();
+
+        foreach (var moi in mois.Where(IsMoiReadyForMoaProvision))
+            await EnsureMoaFormForMoiAsync(context, job, moi);
     }
 
     private static async Task EnsureServiceJobFormAsync(AppDbContext context, JobRequest job)

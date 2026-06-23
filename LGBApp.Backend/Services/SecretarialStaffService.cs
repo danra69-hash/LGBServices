@@ -11,7 +11,11 @@ public static class SecretarialStaffService
 {
     public static async Task<List<User>> GetSecretarialStaffAsync(AppDbContext context) =>
         await context.Users
-            .Where(u => IsAssignableSecretarialUser(u))
+            .Where(u => u.Role == UserRoles.User
+                && u.CustomerId == null
+                && !u.CanApproveMoiIntake
+                && !u.CanApproveMoi
+                && !u.CanApproveMoa)
             .OrderBy(u => u.Name)
             .ToListAsync();
 
@@ -32,10 +36,22 @@ public static class SecretarialStaffService
         if (TaskFormVisibilityHelper.AwaitingIntakeApproval(job))
             return false;
 
+        if (moiForm != null
+            && moiForm.WorkflowState is MoiWorkflowStates.Approved or MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation)
+            return true;
+
+        if (job.TotalQty > 1
+            && job.Units.Any(u => u.InternalHandoffStatus is JobHandoffStatuses.AwaitingSecAssignment
+                or JobHandoffStatuses.PendingPrep
+                or JobHandoffStatuses.ResoInProgress))
+            return moiForm == null
+                || moiForm.WorkflowState is MoiWorkflowStates.Approved
+                    or MoiWorkflowStates.PendingPrep
+                    or MoiWorkflowStates.PendingRecommendation;
+
         if (moiForm != null && moiForm.WorkflowState is
             MoiWorkflowStates.PendingPrep
-            or MoiWorkflowStates.PendingRecommendation
-            or MoiWorkflowStates.Approved)
+            or MoiWorkflowStates.PendingRecommendation)
             return true;
 
         return job.InternalHandoffStatus is

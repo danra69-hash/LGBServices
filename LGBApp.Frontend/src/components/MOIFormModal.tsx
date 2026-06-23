@@ -1,10 +1,19 @@
-import { X, Upload, Paperclip, ArrowRight } from 'lucide-react';
-import { useState, useEffect, useMemo } from 'react';
+import { SignatureCapture, type SignaturePayload } from './SignatureCapture';
+import { ClientSignOffTrail } from './ClientSignOffTrail';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { JobItemDocumentsSection } from './JobItemDocumentsSection';
-import { ApiError, resolveFormTemplate, uploadJobItemDocument, type FormTemplateDto } from '@/lib/api';
+import { ApiError, downloadMoiExportPack, resolveFormTemplate, saveBlobAsFile, type ClientApprovalDto, type FormTemplateDto } from '@/lib/api';
 import { parseDateToIso } from '@/lib/dates';
 import { DateInput } from './DateInput';
 import { moiWorkflowStateLabel } from '@/lib/packageItemStatus';
+import {
+  formatPendingApproverList,
+  signatoryApproverNames,
+  signatoryHasPendingApproval,
+  signatoryMatchesApproverName,
+} from '@/lib/signatoryApprovers';
+import { hydrateMoiFormFields } from '@/lib/moiFormState';
+import { Download } from 'lucide-react';
 
 const toIsoDate = (value: unknown): string => {
   const raw = String(value ?? '').trim();
@@ -38,7 +47,6 @@ interface MOIFormModalProps {
   onClose: () => void;
   onSubmit: (data: any) => void | Promise<void>;
   onSaveDraft?: (data: Record<string, unknown>) => Promise<{ id: number; jobId: number; unitNumber?: number }>;
-  onConvertToMOA?: (data: any) => void;
   onAccept?: (jobId: number, assignedTo: string, comments: string) => void;
   onRecommend?: (formId: number, comments: string) => void;
   onSubmitForApproval?: (formId: number, formData?: Record<string, unknown>) => void;
@@ -49,11 +57,15 @@ interface MOIFormModalProps {
   canApproveIntake?: boolean;
   awaitingIntakeApproval?: boolean;
   currentUserName?: string;
+  signatoryHolderNames?: string[];
+  needsMoiApproval?: boolean;
   onAdminOverride?: (formId: number, comments: string) => void;
   userIsAdmin?: boolean;
   isClientUser?: boolean;
   isMoiApprovalTask?: boolean;
   viewMode?: boolean;
+  elevated?: boolean;
+  closeLabel?: string;
   initialData?: any;
   jobId?: number;
   jobStatus?: 'Pending' | 'In Progress' | 'Completed' | 'Canceled';
@@ -64,38 +76,44 @@ interface MOIFormModalProps {
 }
 
 export function MOIFormModal({
-  isOpen, onClose, onSubmit, onSaveDraft, onConvertToMOA, onAccept, onRecommend, onSubmitForApproval, onClientApprove, onClientReject,
+  isOpen, onClose, onSubmit, onSaveDraft, onAccept, onRecommend, onSubmitForApproval, onClientApprove, onClientReject,
   onApproveIntake, onRejectIntake, canApproveIntake = false, awaitingIntakeApproval = false, onAdminOverride,
   userIsAdmin = false, isClientUser = false, isMoiApprovalTask = false,
-  viewMode = false, initialData, jobId, jobStatus, users = [], customers, products, serviceUsage,
+  viewMode = false, elevated = false, closeLabel, initialData, jobId, jobStatus, users = [], customers, products, serviceUsage,
   currentUserName = '',
+  signatoryHolderNames = [],
+  needsMoiApproval = false,
 }: MOIFormModalProps) {
   const [formTemplate, setFormTemplate] = useState<FormTemplateDto | null>(null);
   const [workflowState, setWorkflowState] = useState('Draft');
+  const [exportingPack, setExportingPack] = useState(false);
+  const [exportPackError, setExportPackError] = useState('');
   const [recommendComments, setRecommendComments] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [intakeRejectReason, setIntakeRejectReason] = useState('');
   const [intakeActionPending, setIntakeActionPending] = useState(false);
-  const [signatureFile, setSignatureFile] = useState<File | null>(null);
+  const [signature, setSignature] = useState<SignaturePayload | null>(null);
   const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
   const [documentCount, setDocumentCount] = useState(0);
-  const [uploadingFile, setUploadingFile] = useState(false);
-  const [uploadError, setUploadError] = useState('');
-  const [pendingUploadNames, setPendingUploadNames] = useState<string[]>([]);
+  const [documentSubmitError, setDocumentSubmitError] = useState('');
+  const [footerError, setFooterError] = useState('');
+  const [actionPending, setActionPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const hydrateSessionKeyRef = useRef('');
   const pendingApprovers: string[] = initialData?.pendingApprovers ?? [];
   const requiredApprovers: string[] = initialData?.requiredApprovers ?? [];
-  const clientApprovals: { accountHolderName?: string }[] = initialData?.clientApprovals ?? [];
-  const nameMatches = (n: string) =>
-    n.localeCompare(currentUserName, undefined, { sensitivity: 'accent' }) === 0;
+  const clientApprovals: ClientApprovalDto[] = initialData?.clientApprovals ?? [];
+  const nameMatches = (n: string) => signatoryMatchesApproverName(n, currentUserName, signatoryHolderNames);
   const alreadySigned = clientApprovals.some((a) => a.accountHolderName && nameMatches(a.accountHolderName));
   const canSignMoi = Boolean(
     isClientUser
+    && needsMoiApproval
     && initialData?.id
     && currentUserName
     && workflowState === 'PendingClientMoiApproval'
     && !alreadySigned
     && (
-      pendingApprovers.some(nameMatches)
+      signatoryHasPendingApproval(pendingApprovers, currentUserName, signatoryHolderNames)
       || requiredApprovers.some(nameMatches)
     ),
   );
@@ -134,7 +152,6 @@ export function MOIFormModal({
 
   // Determine if this is a pending job
   const isPendingJob = viewMode && jobStatus === 'Pending';
-  const isInProgressJob = viewMode && jobStatus === 'In Progress';
   const showIntakeReview = Boolean(
     viewMode
     && canApproveIntake
@@ -153,38 +170,10 @@ export function MOIFormModal({
     && (workflowState === 'Draft' || isMoiRejectedState)
     && !isMoiApprovalTask;
 
-  const emptyFormData = {
-    company: '',
-    documentTitle: '',
-    backgroundInfo: '',
-    typeOfDocument: '',
-    supportingDocument: false,
-    attachedFiles: [] as File[],
-    approvedTemplate: false,
-    documentsExecuted: false,
-    reasonForRatification: '',
-    withLOA: false,
-    approvalPersons: [{ name: '', position: '' }] as { name: string; position: string }[],
-    requestedBy: '',
-    requestedDate: '',
-    approvedBy: '',
-    approvedDate: '',
-    approvalComments: '',
-    turnaroundWeeks: '',
-    draftCanBeAmended: false,
-    urgent: false,
-    urgentReason: '',
-    requiredExecutionDate: '',
-    financeRelated: false,
-    bankSignatoryMatter: false,
-    formTemplateCode: '',
-  };
-
   useEffect(() => {
     if (!isOpen) {
       setDocumentCount(0);
-      setUploadError('');
-      setPendingUploadNames([]);
+      setDocumentSubmitError('');
       return;
     }
     if (!formData.company) return;
@@ -194,46 +183,60 @@ export function MOIFormModal({
       .catch(() => setFormTemplate(null));
   }, [isOpen, formData.company, formData.formTemplateCode, formData.typeOfDocument]);
 
-  // Reset or populate when modal opens
+  // Reset or populate when modal opens (not on every auto-save metadata tick)
   useEffect(() => {
-    if (!isOpen) return;
-    if (!viewMode && !initialData?.id) {
-      setFormData(emptyFormData);
-      setAcceptanceData({ assignedTo: '', comments: '' });
-      setWorkflowState('Draft');
+    if (!isOpen) {
+      hydrateSessionKeyRef.current = '';
+      setFooterError('');
       return;
     }
-    if (initialData) {
-      const d = { ...(initialData.data as Record<string, unknown> | undefined), ...initialData };
-      setFormData({
-        company: String(d.company ?? ''),
-        documentTitle: String(d.documentTitle ?? ''),
-        backgroundInfo: String(d.backgroundInfo ?? ''),
-        typeOfDocument: String(d.typeOfDocument ?? ''),
-        supportingDocument: Boolean(d.supportingDocument),
-        attachedFiles: (d.attachedFiles as File[]) || [],
-        approvedTemplate: Boolean(d.approvedTemplate),
-        documentsExecuted: Boolean(d.documentsExecuted),
-        reasonForRatification: String(d.reasonForRatification ?? ''),
-        withLOA: Boolean(d.withLOA),
-        approvalPersons: (d.approvalPersons as { name: string; position: string }[]) || [{ name: '', position: '' }],
-        requestedBy: String(d.requestedBy ?? d.signerName ?? ''),
-        requestedDate: toIsoDate(d.requestedDate),
-        approvedBy: String(d.approvedBy ?? ''),
-        approvedDate: toIsoDate(d.approvedDate),
-        approvalComments: String(d.approvalComments ?? ''),
-        turnaroundWeeks: String(d.turnaroundPeriod ?? d.turnaroundWeeks ?? ''),
-        draftCanBeAmended: Boolean(d.draftCanBeAmended),
-        urgent: Boolean(d.urgent),
-        urgentReason: String(d.urgentReason ?? ''),
-        requiredExecutionDate: toIsoDate(d.requiredDateOfExecution ?? d.requiredExecutionDate),
-        financeRelated: Boolean(d.financeRelated ?? initialData.financeRelated),
-        bankSignatoryMatter: Boolean(d.bankSignatoryMatter ?? initialData.bankSignatoryMatter),
-        formTemplateCode: String(d.formTemplateCode ?? initialData.formTemplateCode ?? ''),
-      });
+    if (!initialData) return;
+
+    const sessionKey = [
+      initialData.id ?? 'new',
+      initialData.jobId ?? 'job',
+      initialData.unitNumber ?? initialData.activeUnitNumber ?? 'unit',
+    ].join(':');
+
+    if (hydrateSessionKeyRef.current === sessionKey) {
       setWorkflowState(String(initialData.workflowState ?? 'Draft'));
+      return;
     }
-  }, [isOpen, viewMode, initialData]);
+
+    hydrateSessionKeyRef.current = sessionKey;
+    const d = hydrateMoiFormFields(initialData);
+    const today = new Date().toISOString().slice(0, 10);
+    setFormData({
+      company: String(d.company ?? ''),
+      documentTitle: String(d.documentTitle ?? ''),
+      backgroundInfo: String(d.backgroundInfo ?? ''),
+      typeOfDocument: String(d.typeOfDocument ?? ''),
+      supportingDocument: Boolean(d.supportingDocument),
+      attachedFiles: (d.attachedFiles as File[]) || [],
+      approvedTemplate: Boolean(d.approvedTemplate),
+      documentsExecuted: Boolean(d.documentsExecuted),
+      reasonForRatification: String(d.reasonForRatification ?? ''),
+      withLOA: Boolean(d.withLOA),
+      approvalPersons: (d.approvalPersons as { name: string; position: string }[]) || [{ name: '', position: '' }],
+      requestedBy: String(d.requestedBy ?? ''),
+      requestedDate: toIsoDate(d.requestedDate) || (!viewMode ? today : ''),
+      approvedBy: String(d.approvedBy ?? ''),
+      approvedDate: toIsoDate(d.approvedDate),
+      approvalComments: String(d.approvalComments ?? ''),
+      turnaroundWeeks: String(d.turnaroundWeeks ?? ''),
+      draftCanBeAmended: Boolean(d.draftCanBeAmended),
+      urgent: Boolean(d.urgent),
+      urgentReason: String(d.urgentReason ?? ''),
+      requiredExecutionDate: toIsoDate(d.requiredExecutionDate),
+      financeRelated: Boolean(d.financeRelated),
+      bankSignatoryMatter: Boolean(d.bankSignatoryMatter),
+      formTemplateCode: String(d.formTemplateCode ?? ''),
+    });
+    setWorkflowState(String(initialData.workflowState ?? 'Draft'));
+    if (!viewMode) {
+      setAcceptanceData({ assignedTo: '', comments: '' });
+    }
+  }, [isOpen, viewMode, initialData?.id, initialData?.jobId, initialData?.unitNumber, initialData?.activeUnitNumber, initialData?.workflowState]);
 
   useEffect(() => {
     if (!isOpen || viewMode) return;
@@ -245,6 +248,18 @@ export function MOIFormModal({
 
   const selectedCompany = customers?.find(c => c.company === formData.company);
   const moiPersons = selectedCompany?.accountHolders?.filter(h => h.moi) || [];
+  const requestedByOptions = useMemo(() => {
+    const options = [...moiPersons];
+    const ensureName = (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed || options.some((person) => person.name === trimmed)) return;
+      options.push({ id: -options.length, name: trimmed, moi: false, moiApproval: false, moa: false });
+    };
+    ensureName(formData.requestedBy);
+    ensureName(String(initialData?.requestedBy ?? ''));
+    if (isClientUser && currentUserName) ensureName(currentUserName);
+    return options;
+  }, [moiPersons, formData.requestedBy, initialData?.requestedBy, isClientUser, currentUserName]);
 
   const packageNames = useMemo(() => {
     if (!selectedCompany) return [];
@@ -297,60 +312,52 @@ export function MOIFormModal({
     ...formData,
     id: initialData?.id,
     jobId: resolvedJobId,
+    company: formData.company || String(initialData?.company ?? ''),
     unitNumber: resolvedUnitNumber,
     activeUnitNumber: resolvedUnitNumber,
     workflowState,
+    updatedAt: initialData?.updatedAt,
   });
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const filesArray = Array.from(e.target.files ?? []);
-    if (filesArray.length === 0) return;
-
-    setUploadingFile(true);
-    setUploadError('');
-    setPendingUploadNames(filesArray.map((f) => f.name));
-    const folder: 'supporting' | 'moi' = formData.supportingDocument ? 'supporting' : 'moi';
-    void (async () => {
-      try {
-        let uploadJobId = resolvedJobId;
-        let uploadUnit = resolvedUnitNumber;
-        if (!uploadJobId && onSaveDraft) {
-          const saved = await onSaveDraft(buildFormPayload());
-          uploadJobId = saved.jobId;
-          uploadUnit = saved.unitNumber ?? uploadUnit;
-        }
-        if (!uploadJobId) {
-          setUploadError('Save the MOI first so attachments can be stored.');
-          return;
-        }
-        for (const file of filesArray) {
-          await uploadJobItemDocument(uploadJobId, folder, file, uploadUnit);
-        }
-        setDocumentsRefreshKey((k) => k + 1);
-        setPendingUploadNames([]);
-      } catch (err) {
-        setUploadError(err instanceof ApiError ? err.message : 'Failed to upload file.');
-        setPendingUploadNames([]);
-      } finally {
-        setUploadingFile(false);
-      }
-    })();
-    e.target.value = '';
+  const ensureJobForDocuments = async () => {
+    if (resolvedJobId) {
+      return { jobId: Number(resolvedJobId), unitNumber: resolvedUnitNumber };
+    }
+    if (!onSaveDraft) {
+      throw new Error('Save the MOI first so attachments can be stored.');
+    }
+    return onSaveDraft(buildFormPayload());
   };
 
   const handleSubmitForApprovalClick = () => {
-    if (!onSubmitForApproval) return;
+    if (!onSubmitForApproval || actionPending) return;
+    setFooterError('');
     if (formData.supportingDocument && documentCount === 0) {
-      setUploadError('Attach at least one supporting document before submitting for approval.');
+      const message = 'Attach at least one supporting document before submitting for approval.';
+      setDocumentSubmitError(message);
+      setFooterError(message);
       return;
     }
-    setUploadError('');
-    void onSubmitForApproval(initialData?.id ?? 0, buildFormPayload());
+    if (!formRef.current?.reportValidity()) {
+      setFooterError('Please complete all required fields before submitting.');
+      return;
+    }
+    setDocumentSubmitError('');
+    setActionPending(true);
+    void Promise.resolve(onSubmitForApproval(initialData?.id ?? 0, buildFormPayload()))
+      .finally(() => setActionPending(false));
   };
 
-  const removeFile = (index: number) => {
-    const newFiles = formData.attachedFiles.filter((_, i) => i !== index);
-    setFormData({ ...formData, attachedFiles: newFiles });
+  const handleSaveClick = () => {
+    if (actionPending) return;
+    setFooterError('');
+    if (!formRef.current?.reportValidity()) {
+      setFooterError('Please complete all required fields before saving.');
+      return;
+    }
+    setActionPending(true);
+    void Promise.resolve(onSubmit(buildFormPayload()))
+      .finally(() => setActionPending(false));
   };
 
   const handleAddApprovalPerson = () => {
@@ -376,14 +383,7 @@ export function MOIFormModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    void Promise.resolve(onSubmit({
-      ...formData,
-      id: initialData?.id,
-      jobId: resolvedJobId,
-      unitNumber: resolvedUnitNumber,
-      activeUnitNumber: resolvedUnitNumber,
-      workflowState,
-    }));
+    handleSaveClick();
   };
 
   const handleAccept = () => {
@@ -421,26 +421,64 @@ export function MOIFormModal({
     onClose();
   };
 
+
+  const handleDownloadPack = async () => {
+    const formId = initialData?.id as number | undefined;
+    if (!formId) return;
+    setExportingPack(true);
+    setExportPackError('');
+    try {
+      const blob = await downloadMoiExportPack(formId);
+      saveBlobAsFile(blob, `moi-${formId}-pack.json`);
+    } catch (err) {
+      setExportPackError(err instanceof ApiError ? err.message : 'Failed to download pack.');
+    } finally {
+      setExportingPack(false);
+    }
+  };
+
   if (!isOpen) return null;
 
+  const dismissLabel = closeLabel ?? (viewMode ? 'Close' : 'Cancel');
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className={`fixed inset-0 bg-black/50 flex items-center justify-center p-4 ${elevated ? 'z-[60]' : 'z-50'}`}>
       <div className="bg-card rounded-lg border border-border w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="p-6 border-b border-border flex items-center justify-between">
-          <h2>Memorandum of Instruction (MOI) {viewMode && '- View Mode'}</h2>
+        <div className="p-6 border-b border-border flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2>Memorandum of Instruction (MOI) {viewMode && '- View Mode'}</h2>
+            {exportPackError && (
+              <p className="text-xs text-destructive mt-1">{exportPackError}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+          {initialData?.id && (
+            <button
+              type="button"
+              onClick={() => void handleDownloadPack()}
+              disabled={exportingPack}
+              title="Structured JSON export (PDF packs coming later)"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              <Download className="w-4 h-4" />
+              {exportingPack ? 'Downloading…' : 'Download pack'}
+            </button>
+          )}
           <button
+            type="button"
             onClick={handleClose}
-            className="p-1 hover:bg-muted rounded transition-colors"
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
           >
-            <X className="w-5 h-5" />
+            {dismissLabel}
           </button>
+          </div>
         </div>
 
         {showIntakeReview && (
           <div className="px-6 py-4 border-b border-amber-200 bg-amber-50 text-amber-950">
             <p className="font-semibold">MOI intake review</p>
             <p className="text-sm mt-1 text-amber-900/80">
-              The client has submitted this MOI. Accept to approve intake and start internal preparation, or reject to send it back with a reason.
+              The client has submitted this MOI. Sign off to accept it, then assign the secretarial team to start resolution / MOA prep. Or reject to send it back with a reason.
             </p>
           </div>
         )}
@@ -460,7 +498,7 @@ export function MOIFormModal({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
+        <form ref={formRef} onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
           <div className="p-6 space-y-6">
             {jobId && initialData?.signerName && (
               <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-3 text-sm">
@@ -509,15 +547,24 @@ export function MOIFormModal({
               )}
             </div>
 
-            {resolvedJobId && (
+            {(resolvedJobId || onSaveDraft) && (
               <JobItemDocumentsSection
-                jobId={Number(resolvedJobId)}
+                jobId={Number(resolvedJobId) || 0}
                 unitNumber={resolvedUnitNumber}
                 refreshKey={documentsRefreshKey}
-                showWhenEmpty={formData.supportingDocument}
+                showWhenEmpty={formData.supportingDocument || !viewMode}
                 onCountChange={setDocumentCount}
+                countFolders={formData.supportingDocument ? ['supporting'] : undefined}
                 folders={formData.supportingDocument ? ['supporting', 'moi'] : ['moi', 'supporting']}
                 title={viewMode ? 'Documents for review' : 'Uploaded documents'}
+                allowUpload={!viewMode}
+                allowDelete={!viewMode}
+                uploadFolder={formData.supportingDocument ? 'supporting' : 'moi'}
+                onBeforeUpload={async () => {
+                  const resolved = await ensureJobForDocuments();
+                  setDocumentsRefreshKey((k) => k + 1);
+                  return resolved;
+                }}
               />
             )}
 
@@ -623,28 +670,12 @@ export function MOIFormModal({
                 {formData.supportingDocument && (
                   <div className="mt-3 space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      Files upload immediately and are stored for this session{itemLabel}.
+                      Use the documents section above to add or remove files for this session{itemLabel}.
                     </p>
-                    {!viewMode && (
-                      <label className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/90 transition-colors cursor-pointer inline-flex">
-                        <Paperclip className="w-4 h-4" />
-                        <span>{uploadingFile ? 'Uploading…' : 'Attach files'}</span>
-                        <input
-                          type="file"
-                          multiple
-                          onChange={handleFileUpload}
-                          className="hidden"
-                          disabled={uploadingFile}
-                        />
-                      </label>
+                    {documentSubmitError && (
+                      <p className="text-xs text-destructive">{documentSubmitError}</p>
                     )}
-                    {uploadingFile && pendingUploadNames.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        Uploading {pendingUploadNames.join(', ')}…
-                      </p>
-                    )}
-                    {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
-                    {formData.supportingDocument && documentCount > 0 && (
+                    {documentCount > 0 && (
                       <p className="text-xs text-green-700">{documentCount} file{documentCount === 1 ? '' : 's'} attached</p>
                     )}
                   </div>
@@ -799,8 +830,8 @@ export function MOIFormModal({
                       disabled={viewMode}
                     >
                       <option value="">Select Person</option>
-                      {(moiPersons || []).map((person) => (
-                        <option key={person.id} value={person.name}>
+                      {requestedByOptions.map((person) => (
+                        <option key={`${person.id}-${person.name}`} value={person.name}>
                           {person.name}
                         </option>
                       ))}
@@ -983,21 +1014,14 @@ export function MOIFormModal({
             </div>
           </div>
 
+          {clientApprovals.length > 0 && (viewMode || workflowState === 'Approved') && (
+            <div className="px-6 pb-2">
+              <ClientSignOffTrail title="MOI sign-off record" approvals={clientApprovals} />
+            </div>
+          )}
+
           <div className="p-6 border-t border-border flex justify-between items-center gap-3">
             <div>
-              {isInProgressJob && onConvertToMOA && workflowState === 'Approved' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onConvertToMOA({ ...formData, id: initialData?.id, moiFormId: initialData?.id });
-                    handleClose();
-                  }}
-                  className="flex items-center gap-2 px-6 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/90 transition-colors"
-                >
-                  <span>Convert to MOA</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              )}
               {viewMode && workflowState === 'PendingPrep' && (
                 <p className="text-sm text-muted-foreground border border-border rounded-lg p-3">
                   Client has submitted this MOI. Internal secretary: complete the form and save to send for recommendation.
@@ -1023,18 +1047,9 @@ export function MOIFormModal({
               {viewMode && initialData?.id && onClientApprove && canSignMoi && (
                 <div className="space-y-3 max-w-lg">
                   <p className="text-sm text-muted-foreground">
-                    Review the MOI below, attach your signature, and sign to continue.
+                    Review the MOI below, draw your signature (or upload an image/PDF), and sign to continue.
                   </p>
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Upload className="w-4 h-4 text-muted-foreground" />
-                    <span>{signatureFile ? signatureFile.name : 'Attach signature (image or PDF)'}</span>
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={(e) => setSignatureFile(e.target.files?.[0] ?? null)}
-                    />
-                  </label>
+                  <SignatureCapture value={signature} onChange={setSignature} />
                   <input
                     className="w-full px-3 py-2 border border-border rounded-lg text-sm"
                     placeholder="Comments (optional)"
@@ -1045,18 +1060,14 @@ export function MOIFormModal({
                     <button
                       type="button"
                       onClick={() => {
-                        if (!signatureFile) return;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          onClientApprove(initialData.id, {
-                            comments: recommendComments,
-                            signatureFileName: signatureFile.name,
-                            signatureDataUrl: String(reader.result ?? ''),
-                          });
-                        };
-                        reader.readAsDataURL(signatureFile);
+                        if (!signature) return;
+                        onClientApprove(initialData.id, {
+                          comments: recommendComments,
+                          signatureFileName: signature.fileName,
+                          signatureDataUrl: signature.dataUrl,
+                        });
                       }}
-                      disabled={!signatureFile}
+                      disabled={!signature}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
                     >
                       Sign MOI
@@ -1098,7 +1109,7 @@ export function MOIFormModal({
               )}
               {viewMode && workflowState === 'PendingClientMoiApproval' && pendingApprovers.length > 0 && !canSignMoi && (
                 <p className="text-sm text-muted-foreground">
-                  Awaiting signature from: {pendingApprovers.join(', ')}
+                  Awaiting signature from: {formatPendingApproverList(pendingApprovers, currentUserName, signatoryHolderNames)}
                 </p>
               )}
               {userIsAdmin && viewMode && initialData?.id && workflowState !== 'Approved' && onAdminOverride && !showIntakeReview && (
@@ -1140,7 +1151,7 @@ export function MOIFormModal({
                       }}
                       className="px-6 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
                     >
-                      Accept MOI
+                      MOI sign-off
                     </button>
                     <button
                       type="button"
@@ -1165,34 +1176,46 @@ export function MOIFormModal({
                       onClick={handleClose}
                       className="px-6 py-2.5 border border-border rounded-lg hover:bg-muted transition-colors"
                     >
-                      Close
+                      {dismissLabel}
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="flex gap-3 ml-auto">
+                <div className="flex flex-col items-end gap-2 ml-auto">
+                  {(footerError || documentSubmitError) && (
+                    <p className="text-sm text-destructive text-right max-w-md">
+                      {footerError || documentSubmitError}
+                    </p>
+                  )}
+                  <div className="flex gap-3">
                   <button
                     type="button"
                     onClick={handleClose}
                     className="px-6 py-2 border border-border rounded-lg hover:bg-muted transition-colors"
+                    disabled={actionPending}
                   >
-                    {viewMode ? 'Close' : 'Cancel'}
+                    {dismissLabel}
                   </button>
                   {!viewMode && (
                     <button
-                      type="submit"
-                      className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+                      type="button"
+                      onClick={handleSaveClick}
+                      disabled={actionPending}
+                      className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
                     >
-                      Save MOI
+                      {actionPending ? 'Saving…' : 'Save MOI'}
                     </button>
                   )}
                   {!viewMode && canClientResubmit && onSubmitForApproval && (
                     <button
                       type="button"
                       onClick={handleSubmitForApprovalClick}
-                      className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                      disabled={actionPending}
+                      className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
                     >
-                      {isMoiRejectedState || hasRejectionHistory ? 'Resubmit for approval' : 'Submit for approval'}
+                      {actionPending
+                        ? 'Submitting…'
+                        : (isMoiRejectedState || hasRejectionHistory ? 'Resubmit for approval' : 'Submit for approval')}
                     </button>
                   )}
                   {isPendingJob && (
@@ -1205,6 +1228,7 @@ export function MOIFormModal({
                       Accept job
                     </button>
                   )}
+                  </div>
                 </div>
               )}
             </div>

@@ -48,11 +48,15 @@ export function JobItemFolderPanel({ job, unitNumber, onOpenMoi, onOpenMoa }: Jo
     void load();
   }, [load]);
 
-  const handleUpload = async (folder: 'moi' | 'moa' | 'supporting', file: File) => {
+  const handleUpload = async (folder: 'moi' | 'moa' | 'supporting', files: FileList | File[]) => {
+    const fileList = Array.from(files);
+    if (fileList.length === 0) return;
     setUploading(folder);
     setError('');
     try {
-      await uploadJobItemDocument(job.id, folder, file, unitNumber);
+      for (const file of fileList) {
+        await uploadJobItemDocument(job.id, folder, file, unitNumber);
+      }
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Upload failed.');
@@ -175,14 +179,17 @@ export function JobItemFolderPanel({ job, unitNumber, onOpenMoi, onOpenMoa }: Jo
             )}
             <label className="inline-flex items-center gap-1 text-xs text-primary cursor-pointer hover:underline">
               <Upload className="w-3 h-3" />
-              {uploading === folder.folder ? 'Uploading…' : 'Add file'}
+              {uploading === folder.folder ? 'Uploading…' : 'Add files'}
               <input
                 type="file"
+                multiple
                 className="hidden"
                 disabled={uploading !== null}
                 onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void handleUpload(folder.folder as 'moi' | 'moa' | 'supporting', file);
+                  const files = e.target.files;
+                  if (files?.length) {
+                    void handleUpload(folder.folder as 'moi' | 'moa' | 'supporting', files);
+                  }
                   e.target.value = '';
                 }}
               />

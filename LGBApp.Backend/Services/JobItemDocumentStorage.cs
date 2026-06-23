@@ -2,8 +2,14 @@ namespace LGBApp.Backend.Services;
 
 public static class JobItemDocumentStorage
 {
-    public static string RootPath(IWebHostEnvironment env) =>
-        Path.Combine(env.ContentRootPath, "uploads", "job-items");
+    public static string RootPath(IWebHostEnvironment env)
+    {
+        var configured = Environment.GetEnvironmentVariable("LGB_UPLOAD_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured))
+            return Path.GetFullPath(configured);
+
+        return Path.Combine(env.ContentRootPath, "uploads", "job-items");
+    }
 
     public static string BuildStorageKey(int jobId, string folder, string fileName)
     {

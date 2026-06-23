@@ -1,6 +1,7 @@
 using System.Text;
 using LGBApp.Backend.Data;
 using LGBApp.Backend.Middleware;
+using LGBApp.Backend.Tools;
 using LGBApp.Backend.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -97,6 +98,47 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
+if (args.Contains("reset-dev-db"))
+{
+    using var scope = app.Services.CreateScope();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await DevDatabaseReset.RunAsync(context, builder.Configuration);
+    return;
+}
+
+if (args.Contains("repair-jobs"))
+{
+    using var scope = app.Services.CreateScope();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await RepairCustomerJobs.RunAsync(context);
+    return;
+}
+
+if (args.Contains("reset-dev-password"))
+{
+    var resetEmail = args.SkipWhile(a => a != "reset-dev-password").Skip(1).FirstOrDefault();
+    if (string.IsNullOrWhiteSpace(resetEmail))
+    {
+        Console.Error.WriteLine("Usage: dotnet run -- reset-dev-password <email>");
+        return;
+    }
+
+    using var scope = app.Services.CreateScope();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var user = await context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == resetEmail.Trim().ToLower());
+    if (user == null)
+    {
+        Console.Error.WriteLine($"User not found: {resetEmail}");
+        return;
+    }
+
+    user.PasswordHash = PasswordHasher.Hash("password123");
+    user.MustChangePassword = false;
+    await context.SaveChangesAsync();
+    Console.WriteLine($"Reset password for {user.Email} to password123 (mustChangePassword cleared).");
+    return;
+}
+
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -104,9 +146,8 @@ using (var scope = app.Services.CreateScope())
     {
         context.Database.EnsureCreated();
         SqliteSchemaMigrator.Apply(context);
-        DevDataSeeder.SeedIfEmpty(context);
         WorkflowConfigSeeder.Seed(context);
-        InternalStaffSeeder.Seed(context, app.Environment.IsDevelopment());
+        InternalStaffSeeder.Seed(context, resetPasswordsInDevelopment: false);
         BillingPartyService.SeedFromLegacyCustomerFieldsAsync(context).GetAwaiter().GetResult();
         CustomerClientAdminProvisioner.EnsureAllCustomersHaveClientAdminAsync(context).GetAwaiter().GetResult();
         CustomerSignatoryProvisioner.EnsureAllCustomerSignatoriesAsync(context).GetAwaiter().GetResult();
@@ -115,10 +156,29 @@ using (var scope = app.Services.CreateScope())
         FigmaProductCatalog.SyncCatalog(context);
         JobRequestSyncService.LinkOrphanJobs(context);
         context.SaveChanges();
-        JobRequestSyncService.SyncAllCustomersAsync(context).GetAwaiter().GetResult();
-        JobWorkflowIntegrityService.RepairAllAsync(context).GetAwaiter().GetResult();
-        var allJobs = context.JobRequests.ToList();
-        JobFormProvisioner.EnsureFormsForJobsAsync(context, allJobs).GetAwaiter().GetResult();
+
+        // Full package/job sync is expensive (hundreds of units). Run once on empty DB;
+        // per-customer sync runs from CustomersController on create/update.
+        var needsFullJobBootstrap = !context.JobRequests.Any();
+        if (needsFullJobBootstrap)
+        {
+            JobRequestSyncService.SyncAllCustomersAsync(context).GetAwaiter().GetResult();
+            JobWorkflowIntegrityService.RepairAllAsync(context).GetAwaiter().GetResult();
+            var allJobs = context.JobRequests.ToList();
+            JobFormProvisioner.EnsureFormsForJobsAsync(context, allJobs).GetAwaiter().GetResult();
+        }
+        else
+        {
+            // Backfill draft MOI shells for single-qty service lines created after initial bootstrap.
+            var jobsMissingMoi = context.JobRequests
+                .Where(j => j.TaskType == "Service"
+                    && j.CustomerPackageId != null
+                    && j.TotalQty <= 1
+                    && !context.MOIForms.Any(m => m.JobRequestId == j.JobRequestId))
+                .ToList();
+            if (jobsMissingMoi.Count > 0)
+                JobFormProvisioner.EnsureFormsForJobsAsync(context, jobsMissingMoi).GetAwaiter().GetResult();
+        }
     }
     else
     {

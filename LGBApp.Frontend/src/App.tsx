@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LayoutDashboard, Users, Package, Shield, CalendarDays, UserPlus } from 'lucide-react';
 import { StatsCards } from './components/StatsCards';
 import { CustomerTable } from './components/CustomerTable';
@@ -19,8 +19,6 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { ClientPortal } from './components/ClientPortal';
 import { ClientPackages } from './components/ClientPackages';
 import { CreateUserModal } from './components/CreateUserModal';
-import { FormsManagement } from './components/FormsManagement';
-import { CreateFormModal } from './components/CreateFormModal';
 import { MOIFormModal } from './components/MOIFormModal';
 import { MOAFormModal } from './components/MOAFormModal';
 import { Login } from './components/Login';
@@ -28,11 +26,21 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { PackageTracking } from './components/PackageTracking';
 import { PackageWorkboard } from './components/PackageWorkboard';
 import { MyWorkTracker } from './components/MyWorkTracker';
+import { NotificationBell } from './components/NotificationBell';
 import { buildCustomerAddOnLines } from './lib/packagePricing';
+import { mapMoaFormResponseToModalState, resolveMoaUnitNumber, SHOW_MOA_SEQUENTIAL_WORKFLOW } from './lib/moaFormState';
+import { mapMoiFormResponseToModalState, resolveLinkedMoiFormId } from './lib/moiFormState';
 import {
   canClientEditMoiDraft,
   canInternalEditMoi,
   canOpenMoaForJob,
+  canInternalEditMoa,
+  canClientViewMoa,
+  resolveActiveHandoff,
+  shouldOpenMoaForm,
+  scopeJobForUnit,
+  isExecutingHandoff,
+  executingUnitsForJob,
 } from './lib/packageItemStatus';
 import {
   ApiError,
@@ -51,12 +59,14 @@ import {
   createMOAForm,
   createMOIForm,
   getMOAForm,
+  getMOAFormForJob,
   getMOIForm,
   startMoaWorkflow,
   submitMoiForApproval,
   updateMOAForm,
   updateMoaPack,
   recommendMoiForm,
+  recordJobProgress,
   rejectMoiIntake,
   createProduct,
   createUser,
@@ -67,6 +77,7 @@ import {
   getProducts,
   getAuthUser,
   getUsers,
+  getInternalDirectoryUsers,
   isAdmin,
   canManageUsers,
   isClientAdmin,
@@ -75,6 +86,7 @@ import {
   isInternalStaff,
   roleLabel,
   isAssignableInternalStaff,
+  isInternalSecretaryOnly,
   setAuthExpiredHandler,
   updateCustomer,
   updateJobRequest,
@@ -100,9 +112,16 @@ export default function App() {
   const [products, setProducts] = useState<ProductResponse[]>([]);
   const [directoryUsers, setDirectoryUsers] = useState<UserResponse[]>([]);
   const [apiUsers, setApiUsers] = useState<{ id: number; name: string }[]>([]);
+  const [internalDirectoryUsers, setInternalDirectoryUsers] = useState<{ id: number; name: string }[]>([]);
   const assignableUsers = useMemo(
     () => directoryUsers
       .filter(isAssignableInternalStaff)
+      .map((u) => ({ id: u.userId, name: u.name })),
+    [directoryUsers],
+  );
+  const secTeamUsers = useMemo(
+    () => directoryUsers
+      .filter(isInternalSecretaryOnly)
       .map((u) => ({ id: u.userId, name: u.name })),
     [directoryUsers],
   );
@@ -119,12 +138,13 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState<ProductResponse | null>(null);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
-  const [isCreateFormModalOpen, setIsCreateFormModalOpen] = useState(false);
   const [isMOIFormOpen, setIsMOIFormOpen] = useState(false);
   const [isMOAFormOpen, setIsMOAFormOpen] = useState(false);
   const [isJobDetailsModalOpen, setIsJobDetailsModalOpen] = useState(false);
   const [selectedJobRequest, setSelectedJobRequest] = useState<JobRequestResponse | null>(null);
   const [moiDataForMOA, setMOIDataForMOA] = useState<Record<string, unknown> | null>(null);
+  const [linkedMoiForMoa, setLinkedMoiForMoa] = useState<Record<string, unknown> | null>(null);
+  const [moiStackedOnMoa, setMoiStackedOnMoa] = useState(false);
   const [submittedMOIForms, setSubmittedMOIForms] = useState<Record<string, unknown>[]>([]);
   const [selectedMOIForm, setSelectedMOIForm] = useState<Record<string, unknown> | null>(null);
   const [isMOIViewMode, setIsMOIViewMode] = useState(false);
@@ -154,6 +174,10 @@ export default function App() {
   }, [handleAuthExpired]);
 
   const bumpRefresh = () => setRefreshKey((k) => k + 1);
+  const handleActionSuccess = useCallback((message?: string) => {
+    if (message) showToast(message);
+    bumpRefresh();
+  }, [showToast]);
 
   const loadCustomers = useCallback(async () => {
     try {
@@ -193,18 +217,19 @@ export default function App() {
     }
   }, []);
 
+  const loadInternalDirectory = useCallback(async () => {
+    try {
+      const data = await getInternalDirectoryUsers();
+      setInternalDirectoryUsers(data.map((u) => ({ id: u.userId, name: u.name })));
+    } catch {
+      setInternalDirectoryUsers([]);
+    }
+  }, []);
+
   const loadMOIForms = useCallback(async () => {
     try {
       const forms = await getMOIForms();
-      setSubmittedMOIForms(forms.map((f) => ({
-        ...f.data,
-        id: f.id,
-        jobId: f.jobId,
-        workflowState: f.workflowState,
-        clientApprovals: f.clientApprovals,
-        requiredApprovers: f.requiredApprovers,
-        pendingApprovers: f.pendingApprovers,
-      })));
+      setSubmittedMOIForms(forms.map((f) => mapMoiFormResponseToModalState(f)));
     } catch {
       setSubmittedMOIForms([]);
     }
@@ -216,6 +241,37 @@ export default function App() {
   const userIsSignatory = isClientSignatory(currentUser);
   const userIsInternal = isInternalStaff(currentUser);
   const userCanManageTeam = canManageUsers(currentUser);
+  const moaHandoffUnitNumber = resolveMoaUnitNumber(
+    selectedJobRequest ?? undefined,
+    moiDataForMOA ?? undefined,
+    moiDataForMOA?.unitNumber as number | undefined,
+  );
+  const selectedMoaHandoff = selectedJobRequest
+    ? resolveActiveHandoff(selectedJobRequest, moaHandoffUnitNumber)
+    : '';
+  const moaAwaitingAdminReview = selectedMoaHandoff === 'AdminReview';
+  const moaInternallyEditable = userIsInternal
+    && !userIsClientAdmin
+    && !userIsSignatory
+    && canInternalEditMoa(selectedMoaHandoff, {
+      hasWorkflow: SHOW_MOA_SEQUENTIAL_WORKFLOW && Boolean(moiDataForMOA?.workflow),
+      sharonApproved: Boolean(moiDataForMOA?.sharonApprovedAt),
+      awaitingAdminReview: moaAwaitingAdminReview,
+      canApproveMoa: Boolean(currentUser?.canApproveMoa),
+      isAdmin: userIsAdmin,
+      moiWorkflowState: (moiDataForMOA?.moiWorkflowState as string | undefined)
+        ?? selectedJobRequest?.moiWorkflowState,
+    });
+  const canSubmitMoaForAdmin = moaInternallyEditable
+    && !moaAwaitingAdminReview
+    && !Boolean(moiDataForMOA?.submittedForAdminReviewAt);
+  const moaExecutingPhase = isExecutingHandoff(selectedMoaHandoff);
+  const canMarkMoaExecutionComplete = moaExecutingPhase
+    && (userIsAdmin || Boolean(currentUser?.canApproveMoa));
+  const moaFormDirtyRef = useRef(false);
+  const handleMoaDirtyChange = useCallback((dirty: boolean) => {
+    moaFormDirtyRef.current = dirty;
+  }, []);
 
   useEffect(() => {
     if (!userIsAdmin || !isCreateCustomerModalOpen) return;
@@ -241,6 +297,7 @@ export default function App() {
     }
     if (userIsInternal && activeTab === 'dashboard') {
       loadMOIForms();
+      void loadInternalDirectory();
     }
     if (userIsAdmin && activeTab === 'dashboard') {
       loadMOIForms();
@@ -250,7 +307,70 @@ export default function App() {
       loadMOIForms();
       loadProducts();
     }
-  }, [currentUser, userIsAdmin, userIsClientAdmin, userIsInternal, userIsExternal, activeTab, refreshKey, loadCustomers, loadProducts, loadUsers, loadMOIForms, loadMyCompany]);
+  }, [currentUser, userIsAdmin, userIsClientAdmin, userIsInternal, userIsExternal, activeTab, refreshKey, loadCustomers, loadProducts, loadUsers, loadMOIForms, loadMyCompany, loadInternalDirectory]);
+
+  useEffect(() => {
+    if (!currentUser || !userIsInternal || !isMOAFormOpen) return;
+    void loadInternalDirectory();
+  }, [currentUser, userIsInternal, isMOAFormOpen, loadInternalDirectory]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const shouldPoll = isMOAFormOpen || isMOIFormOpen
+      || (userIsInternal && activeTab === 'dashboard')
+      || (userIsExternal && activeTab === 'dashboard');
+    if (!shouldPoll) return;
+
+    const timer = window.setInterval(() => {
+      if (!(isMOAFormOpen && moaInternallyEditable)) {
+        bumpRefresh();
+      }
+      if (isMOIFormOpen && selectedMOIForm?.id && isMOIViewMode) {
+        void getMOIForm(selectedMOIForm.id as number)
+          .then((form) => {
+            setSelectedMOIForm((prev) => {
+              if (!prev) return mapMoiFormResponseToModalState(form, selectedJobRequest ?? undefined);
+              return {
+                ...prev,
+                workflowState: form.workflowState,
+                updatedAt: form.updatedAt,
+                clientApprovals: form.clientApprovals,
+                pendingApprovers: form.pendingApprovers,
+                requiredApprovers: form.requiredApprovers,
+              };
+            });
+          })
+          .catch(() => undefined);
+      }
+      if (isMOAFormOpen && moiDataForMOA?.id && selectedJobRequest && !moaFormDirtyRef.current && !isMOIFormOpen && !moaInternallyEditable) {
+        const unitNumber = moaHandoffUnitNumber;
+        const localUpdatedAt = moiDataForMOA?.updatedAt as string | undefined;
+        void getMOAFormForJob(selectedJobRequest.id, unitNumber)
+          .then((form) => {
+            if (moaFormDirtyRef.current) return;
+            if (localUpdatedAt && form.updatedAt && form.updatedAt <= localUpdatedAt) return;
+            setMOIDataForMOA(mapMoaFormResponseToModalState(form, selectedJobRequest));
+          })
+          .catch(() => undefined);
+      }
+    }, 20000);
+
+    return () => window.clearInterval(timer);
+  }, [
+    currentUser,
+    userIsInternal,
+    userIsExternal,
+    activeTab,
+    isMOAFormOpen,
+    isMOIFormOpen,
+    isMOIViewMode,
+    selectedMOIForm?.id,
+    moiDataForMOA?.id,
+    selectedJobRequest,
+    moaHandoffUnitNumber,
+    moaInternallyEditable,
+    bumpRefresh,
+  ]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -378,6 +498,7 @@ export default function App() {
             : existing?.loaHolders ?? [],
         moiFormTemplateCode: data.moiFormTemplateCode as string | undefined ?? existing?.moiFormTemplateCode,
         moaFormTemplateCode: data.moaFormTemplateCode as string | undefined ?? existing?.moaFormTemplateCode,
+        moaWorkflowTemplateCode: data.moaWorkflowTemplateCode as string | undefined ?? existing?.moaWorkflowTemplateCode,
         moi,
         moiApproval: moiApproval.length > 0 ? moiApproval : existing?.moiApproval ?? [],
         moa,
@@ -412,6 +533,7 @@ export default function App() {
         loaHolders: String(data.loaHolders ?? '').split(',').map((s) => s.trim()).filter(Boolean),
         moiFormTemplateCode: data.moiFormTemplateCode,
         moaFormTemplateCode: data.moaFormTemplateCode,
+        moaWorkflowTemplateCode: data.moaWorkflowTemplateCode,
         dateCreated,
         packages: packageRows.map((p) => {
           const validity = String(p.validity ?? '1 Year');
@@ -541,10 +663,17 @@ export default function App() {
     const payload = {
       jobId,
       unitNumber,
-      company: String(data.company ?? ''),
+      company: String(
+        data.company
+        ?? selectedJobRequest?.customer
+        ?? selectedMOIForm?.company
+        ?? '',
+      ),
       formTemplateCode: data.formTemplateCode as string | undefined,
       financeRelated: Boolean(data.financeRelated),
       bankSignatoryMatter: Boolean(data.bankSignatoryMatter),
+      expectedUpdatedAt: (data.updatedAt as string | undefined)
+        ?? (selectedMOIForm?.updatedAt as string | undefined),
       data: formFields,
     };
     let formId = (data.id as number | undefined) ?? (selectedMOIForm?.id as number | undefined);
@@ -561,25 +690,34 @@ export default function App() {
       }
     }
     const saved = await getMOIForm(formId);
-    await loadMOIForms();
-    bumpRefresh();
-    const nextForm = {
-      ...saved.data,
-      id: saved.id,
-      jobId: saved.jobId ?? jobId,
-      workflowState: saved.workflowState,
-      clientApprovals: saved.clientApprovals,
-      requiredApprovers: saved.requiredApprovers,
-      pendingApprovers: saved.pendingApprovers,
-      unitNumber,
-      activeUnitNumber: unitNumber,
-      totalQty: selectedJobRequest?.totalQty,
-      status: selectedJobRequest?.status,
+    if (!options?.silent) {
+      await loadMOIForms();
+      bumpRefresh();
+    }
+    const nextForm = mapMoiFormResponseToModalState(saved, {
+      id: jobId,
       service: selectedJobRequest?.service,
-      typeOfDocument: selectedJobRequest?.service,
       taskType: selectedJobRequest?.taskType,
-    };
-    setSelectedMOIForm(nextForm);
+      status: selectedJobRequest?.status,
+      totalQty: selectedJobRequest?.totalQty,
+      activeUnitNumber: unitNumber,
+    });
+    if (options?.silent) {
+      setSelectedMOIForm((prev) => {
+        if (!prev) return nextForm;
+        return {
+          ...prev,
+          id: saved.id,
+          updatedAt: saved.updatedAt,
+          workflowState: saved.workflowState ?? prev.workflowState,
+          clientApprovals: saved.clientApprovals ?? prev.clientApprovals,
+          pendingApprovers: saved.pendingApprovers ?? prev.pendingApprovers,
+          requiredApprovers: saved.requiredApprovers ?? prev.requiredApprovers,
+        };
+      });
+    } else {
+      setSelectedMOIForm(nextForm);
+    }
     if (!options?.silent) showToast('MOI form saved.');
     return { id: saved.id, jobId, unitNumber };
   };
@@ -592,73 +730,45 @@ export default function App() {
     }
   };
 
-  const openMoaFormForJob = async (job: JobRequestResponse) => {
-    setSelectedJobRequest(job);
+  const openMoaFormForJob = async (job: JobRequestResponse, unitNumber?: number) => {
+    const activeUnit = unitNumber ?? job.activeUnitNumber;
+    const scopedJob = { ...job, activeUnitNumber: activeUnit };
+    setSelectedJobRequest(scopedJob);
     try {
-      if (job.linkedFormId) {
-        const form = await getMOAForm(job.linkedFormId);
-        setMOIDataForMOA({
-          ...form.data,
-          id: form.id,
-          jobId: form.jobId ?? job.id,
-          moiFormId: form.moiFormId,
-          company: form.company,
-          financeRelated: form.financeRelated,
-          bankSignatoryMatter: form.bankSignatoryMatter,
-          shareMovement: form.shareMovement,
-          packChecklist: form.packChecklist,
-          packValidationErrors: form.packValidationErrors,
-          workflow: form.workflow,
-          clientApprovals: form.clientApprovals,
-          rejections: form.rejections,
-          requiredApprovers: form.requiredApprovers,
-          pendingApprovers: form.pendingApprovers,
-          sharonApprovedAt: form.sharonApprovedAt,
-        });
-        setIsMOAFormOpen(true);
-        return;
+      const moaFormId = job.linkedFormKind === 'MOA' ? job.linkedFormId : undefined;
+      const form = moaFormId
+        ? await getMOAForm(moaFormId)
+        : await getMOAFormForJob(job.id, activeUnit);
+      setMOIDataForMOA(mapMoaFormResponseToModalState(form, scopedJob));
+
+      const unit = job.units?.find((u) => u.unitNumber === activeUnit);
+      const moiFormId = form.moiFormId
+        ?? unit?.moiFormId
+        ?? resolveLinkedMoiFormId(scopedJob);
+      if (moiFormId) {
+        try {
+          const moi = await getMOIForm(moiFormId);
+          setLinkedMoiForMoa(mapMoiFormResponseToModalState(moi, scopedJob));
+        } catch {
+          setLinkedMoiForMoa(null);
+        }
+      } else {
+        setLinkedMoiForMoa(null);
       }
-    } catch {
-      // fall through to empty shell
+
+      setIsMOAFormOpen(true);
+      return;
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to open MOA form.');
     }
-    setMOIDataForMOA({
-      id: job.linkedFormId,
-      company: job.customer,
-      signerName: job.accountHolder,
-      signerEmail: job.accountHolderEmail,
-      signerPhone: job.accountHolderPhone,
-    });
-    setIsMOAFormOpen(true);
   };
 
   const openMoiFormForJob = async (job: JobRequestResponse, viewMode = true) => {
     setSelectedJobRequest(job);
     const unitNumber = job.activeUnitNumber ?? ((job.totalQty ?? 1) > 1 ? undefined : 1);
-    let moiForm = submittedMOIForms.find((f) =>
-      f.id === job.linkedFormId
-      || (f.jobId === job.id && (unitNumber == null || f.unitNumber === unitNumber || f.activeUnitNumber === unitNumber)));
-    if (!moiForm) {
-      try {
-        const f = job.linkedFormId
-          ? await getMOIForm(job.linkedFormId)
-          : unitNumber != null
-            ? (await getMOIForms(job.id, unitNumber))[0]
-            : undefined;
-        if (f) {
-          moiForm = {
-            ...f.data,
-            id: f.id,
-            jobId: f.jobId ?? job.id,
-            workflowState: f.workflowState,
-            clientApprovals: f.clientApprovals,
-            requiredApprovers: f.requiredApprovers,
-            pendingApprovers: f.pendingApprovers,
-          };
-        }
-      } catch {
-        // fall through to empty shell
-      }
-    }
+    const unit = unitNumber != null ? job.units?.find((u) => u.unitNumber === unitNumber) : undefined;
+    const formId = resolveLinkedMoiFormId(job) ?? unit?.moiFormId ?? (job.linkedFormKind === 'MOI' ? job.linkedFormId : undefined);
+
     const resolveMoiEditable = (workflowState?: string) => {
       const state = workflowState ?? job.moiWorkflowState ?? 'Draft';
       const clientCanEdit = canClientEditMoiDraft(job, {
@@ -671,6 +781,29 @@ export default function App() {
       return clientCanEdit || internalCanEdit;
     };
 
+    let moiForm: Record<string, unknown> | undefined;
+    if (!userIsExternal) {
+      moiForm = submittedMOIForms.find((f) =>
+        f.id === formId
+        || (f.jobId === job.id && (unitNumber == null || f.unitNumber === unitNumber || f.activeUnitNumber === unitNumber)));
+    }
+
+    if (!moiForm) {
+      try {
+        const f = formId
+          ? await getMOIForm(formId)
+          : unitNumber != null
+            ? (await getMOIForms(job.id, unitNumber))[0]
+            : undefined;
+        if (f) {
+          moiForm = mapMoiFormResponseToModalState(f, job);
+        }
+      } catch (err) {
+        showToast(err instanceof ApiError ? err.message : 'Failed to load MOI form.');
+        return;
+      }
+    }
+
     if (moiForm) {
       const workflowState = String(moiForm.workflowState ?? job.moiWorkflowState ?? 'Draft');
       setSelectedMOIForm({
@@ -678,7 +811,6 @@ export default function App() {
         workflowState,
         status: job.status,
         service: job.service,
-        typeOfDocument: job.service,
         taskType: job.taskType,
         unitNumber: job.activeUnitNumber ?? ((job.totalQty ?? 1) <= 1 ? 1 : undefined),
         activeUnitNumber: job.activeUnitNumber ?? ((job.totalQty ?? 1) <= 1 ? 1 : undefined),
@@ -687,7 +819,7 @@ export default function App() {
       setIsMOIViewMode(!resolveMoiEditable(workflowState));
     } else {
       setSelectedMOIForm({
-        id: job.linkedFormId,
+        id: formId ?? job.linkedFormId,
         company: job.customer,
         signerName: job.accountHolder,
         signerEmail: job.accountHolderEmail,
@@ -695,6 +827,7 @@ export default function App() {
         taskType: job.taskType,
         service: job.service,
         typeOfDocument: job.service,
+        requestedBy: job.accountHolder ?? '',
         jobId: job.id,
         unitNumber: job.activeUnitNumber ?? ((job.totalQty ?? 1) <= 1 ? 1 : undefined),
         activeUnitNumber: job.activeUnitNumber ?? ((job.totalQty ?? 1) <= 1 ? 1 : undefined),
@@ -702,122 +835,234 @@ export default function App() {
         workflowState: job.moiWorkflowState ?? 'Draft',
       });
       const editable = resolveMoiEditable(job.moiWorkflowState ?? 'Draft');
-      setIsMOIViewMode(!editable && Boolean(job.linkedFormId) && viewMode);
+      setIsMOIViewMode(!editable);
     }
     setIsMOIFormOpen(true);
   };
 
-  const handleOpenClientForm = (job: JobRequestResponse) => {
-    if (canOpenMoaForJob(job)) {
-      void openMoaFormForJob(job);
-      return;
-    }
+  const handleOpenClientMoiForm = (job: JobRequestResponse) => {
     void openMoiFormForJob(job, true);
   };
 
-  const jobForUnit = (job: JobRequestResponse, unit?: JobRequestUnitDto): JobRequestResponse => {
-    if (!unit) return job;
-    return {
-      ...job,
-      activeUnitNumber: unit.unitNumber,
-      linkedFormId: unit.linkedFormId ?? job.linkedFormId,
-      linkedFormKind: unit.linkedFormKind ?? job.linkedFormKind,
-      hasMoiForm: unit.hasMoiForm ?? job.hasMoiForm,
-      hasMoaForm: unit.hasMoaForm ?? job.hasMoaForm,
-      moiWorkflowState: unit.moiWorkflowState ?? job.moiWorkflowState,
-    };
+  const handleOpenClientMoaForm = (job: JobRequestResponse) => {
+    void openMoaFormForJob(job, job.activeUnitNumber);
+  };
+
+  const jobForUnit = (job: JobRequestResponse, unit?: JobRequestUnitDto): JobRequestResponse =>
+    scopeJobForUnit(job, unit);
+
+  const handleViewLinkedMoi = (job?: JobRequestResponse, moiFormId?: number, unitNumber?: number) => {
+    const baseJob = job ?? selectedJobRequest;
+    if (!baseJob) return;
+    const formId = moiFormId
+      ?? (linkedMoiForMoa?.id as number | undefined)
+      ?? resolveLinkedMoiFormId(baseJob);
+    if (!formId) return;
+    if (isMOAFormOpen) setMoiStackedOnMoa(true);
+    void openMoiFormForJob({
+      ...baseJob,
+      activeUnitNumber: unitNumber ?? baseJob.activeUnitNumber ?? moaHandoffUnitNumber,
+      linkedFormId: formId,
+      linkedFormKind: 'MOI',
+      hasMoiForm: true,
+    }, true);
+  };
+
+  const handleCloseMoiForm = () => {
+    setIsMOIFormOpen(false);
+    setIsMOIViewMode(false);
+    setSelectedMOIForm(null);
+    if (moiStackedOnMoa) {
+      setMoiStackedOnMoa(false);
+      return;
+    }
+    setSelectedJobRequest(null);
+  };
+
+  const handleViewLinkedMoiFromTracker = async (jobId: number, unitNumber: number, moiFormId: number) => {
+    try {
+      const job = await getJobRequest(jobId);
+      const unit = job.units?.find((u) => u.unitNumber === unitNumber);
+      const scoped = unit ? jobForUnit(job, unit) : { ...job, activeUnitNumber: unitNumber };
+      handleViewLinkedMoi(scoped, moiFormId, unitNumber);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to open MOI.');
+    }
   };
 
   const handleOpenFormTask = (job: JobRequestResponse, unit?: JobRequestUnitDto) => {
     const scoped = jobForUnit(job, unit);
-    if (canOpenMoaForJob(scoped, unit)) {
-      void openMoaFormForJob(scoped);
+    if (shouldOpenMoaForm(job, unit)) {
+      void openMoaFormForJob(scoped, unit?.unitNumber);
       return;
     }
     void openMoiFormForJob(scoped, true);
   };
 
-  const handleConvertToMOA = (moiData: Record<string, unknown>) => {
-    setMOIDataForMOA(moiData);
-    setIsMOIFormOpen(false);
-    setIsMOIViewMode(false);
-    setSelectedMOIForm(null);
-    setSelectedJobRequest(null);
-    setIsMOAFormOpen(true);
+  const saveMoaDraft = async (
+    data: Record<string, unknown>,
+    options?: { silent?: boolean },
+  ): Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string }> => {
+    const existingId = (data.id as number | undefined) ?? (moiDataForMOA?.id as number | undefined);
+    const jobId = (data.jobId as number | undefined) ?? selectedJobRequest?.id;
+    if (!jobId) throw new ApiError('MOA must be linked to a package item before saving.', 400);
+
+    const unitNumber = resolveMoaUnitNumber(
+      selectedJobRequest ?? undefined,
+      data,
+      (data.unitNumber as number | undefined) ?? (moiDataForMOA?.unitNumber as number | undefined),
+    );
+    if ((selectedJobRequest?.totalQty ?? 1) > 1 && unitNumber == null) {
+      throw new ApiError('Select a session before saving this MOA.', 400);
+    }
+
+    const company = String(data.company ?? moiDataForMOA?.company ?? '');
+    const {
+      packChecklist: packFromData,
+      id: _id,
+      jobId: _jobId,
+      unitNumber: _unitNumber,
+      activeUnitNumber: _activeUnitNumber,
+      updatedAt: _updatedAt,
+      workflow: _workflow,
+      packValidationErrors: _packErrors,
+      submittedForAdminReviewAt: _submitted,
+      sharonApprovedAt: _sharon,
+      clientApprovals: _clientApprovals,
+      rejections: _rejections,
+      requiredApprovers: _requiredApprovers,
+      pendingApprovers: _pendingApprovers,
+      ...formFields
+    } = data;
+
+    if (unitNumber != null) {
+      formFields.unitNumber = unitNumber;
+      formFields.activeUnitNumber = unitNumber;
+    }
+
+    let expectedUpdatedAt = (data.updatedAt as string | undefined)
+      ?? (moiDataForMOA?.updatedAt as string | undefined);
+
+    const payload = {
+      jobId,
+      moiFormId: (data.moiFormId as number | undefined) ?? (moiDataForMOA?.moiFormId as number | undefined),
+      company,
+      formTemplateCode: data.formTemplateCode as string | undefined,
+      financeRelated: Boolean(data.financeRelated ?? moiDataForMOA?.financeRelated),
+      bankSignatoryMatter: Boolean(data.bankSignatoryMatter ?? moiDataForMOA?.bankSignatoryMatter),
+      shareMovement: Boolean(data.shareMovement),
+      expectedUpdatedAt,
+      data: formFields,
+    };
+
+    let formId = existingId;
+    if (formId) {
+      await updateMOAForm(formId, payload);
+      const latestAfterForm = await getMOAForm(formId);
+      expectedUpdatedAt = latestAfterForm.updatedAt;
+    } else {
+      const created = await createMOAForm(payload);
+      formId = created.id;
+      expectedUpdatedAt = created.updatedAt;
+    }
+
+    const pack = (packFromData ?? data.packChecklist) as Record<string, unknown> | undefined;
+    const saved = await updateMoaPack(formId, {
+      checklist: {
+        internalChecklistA: Boolean(pack?.internalChecklistA),
+        internalChecklistB: Boolean(pack?.internalChecklistB),
+        cleanAgreementAttached: Boolean(pack?.cleanAgreementAttached),
+        shareholdingTableAttached: Boolean(pack?.shareholdingTableAttached),
+        ssmRegistrationNo: String(pack?.ssmRegistrationNo ?? ''),
+        ssmNewRegistrationNo: String(pack?.ssmNewRegistrationNo ?? ''),
+        ssmEntityType: String(pack?.ssmEntityType ?? ''),
+        ssmStatus: String(pack?.ssmStatus ?? ''),
+        ssmAsAtDate: String(pack?.ssmAsAtDate ?? ''),
+      },
+      financeRelated: payload.financeRelated,
+      bankSignatoryMatter: payload.bankSignatoryMatter,
+      shareMovement: payload.shareMovement,
+      expectedUpdatedAt,
+    });
+
+    moaFormDirtyRef.current = false;
+    if (unitNumber != null && selectedJobRequest && selectedJobRequest.activeUnitNumber !== unitNumber) {
+      setSelectedJobRequest((prev) => prev ? { ...prev, activeUnitNumber: unitNumber } : prev);
+    }
+    if (options?.silent) {
+      if (!existingId && formId) {
+        setMOIDataForMOA((prev) => {
+          if (!prev) {
+            return {
+              ...data,
+              id: formId,
+              jobId,
+              unitNumber,
+              activeUnitNumber: unitNumber,
+              updatedAt: saved.updatedAt,
+            };
+          }
+          return { ...prev, id: formId, updatedAt: saved.updatedAt };
+        });
+      }
+    } else {
+      setMOIDataForMOA({
+        ...data,
+        ...formFields,
+        id: formId,
+        jobId,
+        unitNumber,
+        activeUnitNumber: unitNumber,
+        workflow: saved.workflow,
+        packChecklist: saved.packChecklist,
+        packValidationErrors: saved.packValidationErrors,
+        submittedForAdminReviewAt: saved.submittedForAdminReviewAt,
+        updatedAt: saved.updatedAt,
+        company,
+      });
+      bumpRefresh();
+    }
+    if (!options?.silent) showToast('MOA form saved.');
+    return { id: formId!, jobId, unitNumber, updatedAt: saved.updatedAt };
   };
 
   const handleMOASubmit = async (data: Record<string, unknown>) => {
     try {
-      const existingId = (data.id as number | undefined) ?? (moiDataForMOA?.id as number | undefined);
-      const company = String(data.company ?? moiDataForMOA?.company ?? '');
-      const payload = {
-        jobId: (data.jobId as number | undefined) ?? selectedJobRequest?.id,
-        moiFormId: (data.moiFormId as number | undefined) ?? (moiDataForMOA?.moiFormId as number | undefined),
-        company,
-        formTemplateCode: data.formTemplateCode as string | undefined,
-        financeRelated: Boolean(data.financeRelated ?? moiDataForMOA?.financeRelated),
-        bankSignatoryMatter: Boolean(data.bankSignatoryMatter ?? moiDataForMOA?.bankSignatoryMatter),
-        shareMovement: Boolean(data.shareMovement),
-        data,
-      };
-
-      let formId = existingId;
-      if (formId) {
-        await updateMOAForm(formId, payload);
-      } else {
-        const saved = await createMOAForm(payload);
-        formId = saved.id;
-      }
-
-      const pack = data.packChecklist as Record<string, unknown> | undefined;
-      let saved = formId
-        ? await updateMoaPack(formId, {
-            checklist: {
-              internalChecklistA: Boolean(pack?.internalChecklistA),
-              internalChecklistB: Boolean(pack?.internalChecklistB),
-              cleanAgreementAttached: Boolean(pack?.cleanAgreementAttached),
-              shareholdingTableAttached: Boolean(pack?.shareholdingTableAttached),
-              ssmRegistrationNo: String(pack?.ssmRegistrationNo ?? ''),
-              ssmNewRegistrationNo: String(pack?.ssmNewRegistrationNo ?? ''),
-              ssmEntityType: String(pack?.ssmEntityType ?? ''),
-              ssmStatus: String(pack?.ssmStatus ?? ''),
-              ssmAsAtDate: String(pack?.ssmAsAtDate ?? ''),
-            },
-            financeRelated: payload.financeRelated,
-            bankSignatoryMatter: payload.bankSignatoryMatter,
-            shareMovement: payload.shareMovement,
-          })
-        : null;
-
-      if (!saved && formId) saved = await getMOAForm(formId);
-      setMOIDataForMOA({
-        ...data,
-        id: formId,
-        workflow: saved?.workflow,
-        packChecklist: saved?.packChecklist,
-        packValidationErrors: saved?.packValidationErrors,
-        company,
-      });
-      showToast('MOA form saved.');
-      bumpRefresh();
+      return await saveMoaDraft(data);
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'Failed to save MOA form.');
+      if (err instanceof ApiError && err.status === 409) {
+        const existingId = (data.id as number | undefined) ?? (moiDataForMOA?.id as number | undefined);
+        showToast(`${err.message} Reloading latest draft…`);
+        if (existingId) {
+          const latest = await getMOAForm(existingId).catch(() => null);
+          if (latest && selectedJobRequest) {
+            setMOIDataForMOA(mapMoaFormResponseToModalState(latest, selectedJobRequest));
+          }
+        }
+      } else {
+        showToast(err instanceof ApiError ? err.message : 'Failed to save MOA form.');
+      }
+      throw err;
     }
   };
 
-  const handleStartMoaWorkflow = async (moaFormId: number) => {
+  const handleStartMoaWorkflow = async (draft: Record<string, unknown>) => {
     try {
-      const saved = await startMoaWorkflow(moaFormId);
+      const { id } = await saveMoaDraft(draft, { silent: true });
+      const saved = await startMoaWorkflow(id);
       setMOIDataForMOA((prev) => ({
         ...(prev ?? {}),
-        id: moaFormId,
+        ...draft,
+        id,
         workflow: saved.workflow,
+        packChecklist: saved.packChecklist,
         packValidationErrors: saved.packValidationErrors,
+        updatedAt: saved.updatedAt,
       }));
-      showToast('MOA circulation started.');
+      showToast('MOA internal routing started.');
       bumpRefresh();
     } catch (err) {
-      showToast(err instanceof ApiError ? err.message : 'Cannot start MOA workflow — complete the pack checklist.');
+      showToast(err instanceof ApiError ? err.message : 'Cannot start MOA internal routing — complete the pack checklist.');
     }
   };
 
@@ -837,6 +1082,10 @@ export default function App() {
       if (formData) {
         const saved = await saveMoiDraft(formData, { silent: true });
         id = saved.id;
+      }
+      if (!id) {
+        showToast('Save the MOI draft before submitting for approval.');
+        return;
       }
       await submitMoiForApproval(id);
       await loadMOIForms();
@@ -872,9 +1121,14 @@ export default function App() {
     payload: { comments: string; signatureFileName?: string; signatureDataUrl?: string },
   ) => {
     try {
-      await clientApproveMoaForm(formId, payload);
+      const result = await clientApproveMoaForm(formId, payload);
       bumpRefresh();
-      showToast('MOA approved — returned to LGB for execution.');
+      const pendingCount = result.pendingApprovers?.length ?? 0;
+      if (pendingCount > 0) {
+        showToast(`MOA signed — ${pendingCount} more client signator${pendingCount === 1 ? 'y' : 'ies'} required.`);
+      } else {
+        showToast('MOA fully signed — package line completed.');
+      }
       setIsMOAFormOpen(false);
       setMOIDataForMOA(null);
       setSelectedJobRequest(null);
@@ -912,7 +1166,7 @@ export default function App() {
 
   const handleSharonApproveMoa = async (jobId: number) => {
     try {
-      await advanceJobHandoff(jobId, 'sharon-approve-moa');
+      await advanceJobHandoff(jobId, 'sharon-approve-moa', undefined, moaHandoffUnitNumber);
       bumpRefresh();
       showToast('MOA approved — ready to send to client.');
       if (selectedJobRequest?.id === jobId) {
@@ -926,7 +1180,7 @@ export default function App() {
 
   const handleSharonRejectMoa = async (jobId: number, reason: string) => {
     try {
-      await advanceJobHandoff(jobId, 'reject-moa', reason);
+      await advanceJobHandoff(jobId, 'reject-moa', reason, moaHandoffUnitNumber);
       bumpRefresh();
       showToast('MOA rejected — returned to secretary.');
       setIsMOAFormOpen(false);
@@ -939,7 +1193,7 @@ export default function App() {
 
   const handleSendMoaToClient = async (jobId: number) => {
     try {
-      await advanceJobHandoff(jobId, 'approve-for-moa');
+      await advanceJobHandoff(jobId, 'approve-for-moa', undefined, moaHandoffUnitNumber);
       bumpRefresh();
       showToast('MOA sent to client for approval.');
       setIsMOAFormOpen(false);
@@ -947,6 +1201,58 @@ export default function App() {
       setSelectedJobRequest(null);
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'Failed to send MOA to client.');
+    }
+  };
+
+  const handleSubmitMoaForAdminReview = async (jobId: number) => {
+    try {
+      const unitNumber = moaHandoffUnitNumber
+        ?? resolveMoaUnitNumber(selectedJobRequest ?? undefined, moiDataForMOA ?? undefined);
+      if ((selectedJobRequest?.totalQty ?? 1) > 1 && unitNumber == null) {
+        showToast('Select a session before submitting this MOA.');
+        return;
+      }
+      const updated = await advanceJobHandoff(jobId, 'submit-admin-review', undefined, unitNumber);
+      setSelectedJobRequest(updated);
+      if (moiDataForMOA?.id) {
+        const form = await getMOAForm(moiDataForMOA.id as number);
+        setMOIDataForMOA((prev) => ({
+          ...(prev ?? {}),
+          submittedForAdminReviewAt: form.submittedForAdminReviewAt,
+        }));
+      }
+      bumpRefresh();
+      showToast('MOA draft submitted for admin approval.');
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to submit MOA for approval.');
+    }
+  };
+
+  const handleMarkExecutionComplete = async (jobId: number, unitNumber?: number) => {
+    try {
+      const resolvedUnit = unitNumber
+        ?? moaHandoffUnitNumber
+        ?? resolveMoaUnitNumber(selectedJobRequest ?? undefined, moiDataForMOA ?? undefined)
+        ?? ((selectedJobRequest?.totalQty ?? 1) <= 1 ? 1 : undefined);
+      if ((selectedJobRequest?.totalQty ?? 1) > 1 && resolvedUnit == null) {
+        showToast('Select a session before marking this line completed.');
+        return;
+      }
+      const updated = await recordJobProgress(jobId, {
+        unitNumber: resolvedUnit,
+        markUnitComplete: true,
+      });
+      if (selectedJobRequest?.id === jobId) {
+        setSelectedJobRequest(updated);
+      }
+      bumpRefresh();
+      showToast('Package line marked completed.');
+      setIsMOAFormOpen(false);
+      setMOIDataForMOA(null);
+      setLinkedMoiForMoa(null);
+      setSelectedJobRequest(null);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Failed to mark completed.');
     }
   };
 
@@ -994,7 +1300,7 @@ export default function App() {
       await approveMoiIntake(selectedJobRequest.id, unitNumber);
       bumpRefresh();
       await loadMOIForms();
-      showToast('MOI accepted — intake approved.');
+      showToast('MOI signed off — assign secretarial team to start resolution.');
       setIsMOIFormOpen(false);
       setIsMOIViewMode(false);
       setSelectedMOIForm(null);
@@ -1090,10 +1396,13 @@ export default function App() {
   const handleOpenTrackerTask = async (jobId: number, unitNumber?: number) => {
     try {
       const job = await getJobRequest(jobId);
+      const executingUnits = executingUnitsForJob(job);
       const unit = unitNumber != null
         ? job.units?.find((u) => u.unitNumber === unitNumber)
-        : job.units?.find((u) => u.awaitingIntakeApproval)
-          ?? (job.units?.length === 1 ? job.units[0] : undefined);
+        : executingUnits.length === 1
+          ? executingUnits[0]
+          : job.units?.find((u) => u.awaitingIntakeApproval)
+            ?? (job.units?.length === 1 ? job.units[0] : undefined);
       handleOpenFormTask(job, unit);
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'Failed to open task.');
@@ -1104,9 +1413,11 @@ export default function App() {
     id: c.id,
     company: c.company,
     package: c.packages?.find((p) => p.status === 'Active')?.packageName ?? c.package,
+    hasLoa: c.hasLoa,
+    moaWorkflowTemplateCode: c.moaWorkflowTemplateCode,
     packageNames: c.packages?.filter((p) => p.status === 'Active').map((p) => p.packageName)
       ?? (c.package ? [c.package] : []),
-    accountHolders: c.accountHolders.map((h) => ({
+    accountHolders: (c.accountHolders ?? []).map((h) => ({
       id: h.id,
       name: h.name,
       moi: (c.moi || []).includes(h.name),
@@ -1117,7 +1428,7 @@ export default function App() {
 
   const customerOptions = customers.map(toFormModalCustomer);
 
-  const formModalCustomers = (() => {
+  const formModalCustomers = useMemo(() => {
     if (selectedJobRequest) {
       const full = customerOptions.find(
         (c) => c.id === selectedJobRequest.customerId || c.company === selectedJobRequest.customer,
@@ -1133,7 +1444,7 @@ export default function App() {
         packageNames: myCompany?.packages?.filter((p) => p.status === 'Active').map((p) => p.packageName)
           ?? (myCompany?.package ? [myCompany.package] : []),
         accountHolders: myCompany
-          ? myCompany.accountHolders.map((h) => ({
+          ? (myCompany.accountHolders ?? []).map((h) => ({
               id: h.id,
               name: h.name,
               moi: (myCompany.moi || []).includes(h.name),
@@ -1151,7 +1462,7 @@ export default function App() {
     }
     if (userIsExternal && myCompany) return [toFormModalCustomer(myCompany)];
     return customerOptions;
-  })();
+  }, [selectedJobRequest, customerOptions, myCompany, userIsExternal]);
 
   const productOptions = products.map((p) => ({
     id: p.id,
@@ -1197,11 +1508,6 @@ export default function App() {
         isOpen={isHistoryModalOpen}
         onClose={() => setIsHistoryModalOpen(false)}
       />
-      <CreateFormModal
-        isOpen={isCreateFormModalOpen}
-        onClose={() => setIsCreateFormModalOpen(false)}
-        onSubmit={() => showToast('Form template saved locally.')}
-      />
         </>
       )}
       {userCanManageTeam && (
@@ -1216,28 +1522,26 @@ export default function App() {
       )}
       <MOIFormModal
         isOpen={isMOIFormOpen}
-        onClose={() => {
-          setIsMOIFormOpen(false);
-          setIsMOIViewMode(false);
-          setSelectedMOIForm(null);
-          setSelectedJobRequest(null);
-        }}
+        onClose={handleCloseMoiForm}
+        elevated={moiStackedOnMoa}
+        closeLabel={moiStackedOnMoa ? 'Back to MOA' : undefined}
         onSubmit={handleMOISubmit}
         onSaveDraft={(data) => saveMoiDraft(data, { silent: true })}
-        onConvertToMOA={handleConvertToMOA}
         onAccept={userIsAdmin ? handleAcceptJob : undefined}
         onRecommend={handleRecommendMoi}
         onSubmitForApproval={handleSubmitMoiForApproval}
         onClientApprove={handleClientApproveMoi}
         onClientReject={userIsClientAdmin || userIsSignatory ? handleClientRejectMoi : undefined}
-        onApproveIntake={currentUser?.canApproveMoiIntake ? handleApproveMoiIntake : undefined}
+        onApproveIntake={(currentUser?.canApproveMoiIntake || currentUser?.canApproveMoi) ? handleApproveMoiIntake : undefined}
         onRejectIntake={currentUser?.canApproveMoiIntake ? handleRejectMoiIntake : undefined}
-        canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
+        canApproveIntake={Boolean(currentUser?.canApproveMoiIntake || currentUser?.canApproveMoi)}
         awaitingIntakeApproval={isAwaitingMoiIntake(selectedJobRequest, selectedMOIForm)}
         onAdminOverride={userIsAdmin ? handleAdminOverrideMoi : undefined}
         isClientUser={userIsClientAdmin || userIsSignatory}
         isMoiApprovalTask={selectedJobRequest?.taskType === 'MOI Approval'}
         currentUserName={currentUser?.name}
+        signatoryHolderNames={currentUser?.signatoryHolderNames}
+        needsMoiApproval={Boolean(currentUser?.needsMoiApproval)}
         userIsAdmin={userIsAdmin}
         viewMode={isMOIViewMode}
         initialData={selectedMOIForm}
@@ -1253,28 +1557,55 @@ export default function App() {
         onClose={() => {
           setIsMOAFormOpen(false);
           setMOIDataForMOA(null);
+          setLinkedMoiForMoa(null);
+          setMoiStackedOnMoa(false);
+          if (isMOIFormOpen) {
+            setIsMOIFormOpen(false);
+            setIsMOIViewMode(false);
+            setSelectedMOIForm(null);
+          }
+          setSelectedJobRequest(null);
         }}
         onSubmit={handleMOASubmit}
-        onStartWorkflow={userIsInternal ? handleStartMoaWorkflow : undefined}
-        onClientApprove={userIsClientAdmin || userIsSignatory ? handleClientApproveMoa : undefined}
-        onClientReject={userIsClientAdmin || userIsSignatory ? handleClientRejectMoa : undefined}
+        onSaveDraft={(data) => saveMoaDraft(data, { silent: true })}
+        onDirtyChange={handleMoaDirtyChange}
+        onStartWorkflow={SHOW_MOA_SEQUENTIAL_WORKFLOW && moaInternallyEditable ? handleStartMoaWorkflow : undefined}
+        onClientApprove={
+          (currentUser?.needsMoa || currentUser?.isInternalSignatory || currentUser?.canApproveMoa)
+            ? handleClientApproveMoa
+            : undefined
+        }
+        onClientReject={currentUser?.needsMoa ? handleClientRejectMoa : undefined}
         onSharonApprove={userIsAdmin || currentUser?.canApproveMoa ? handleSharonApproveMoa : undefined}
         onSharonReject={userIsAdmin || currentUser?.canApproveMoa ? handleSharonRejectMoa : undefined}
         onSendToClient={userIsAdmin || currentUser?.canApproveMoa ? handleSendMoaToClient : undefined}
-        jobHandoffStatus={selectedJobRequest?.internalHandoffStatus ?? ''}
+        onSubmitForAdminReview={canSubmitMoaForAdmin ? handleSubmitMoaForAdminReview : undefined}
+        canSubmitForAdminReview={canSubmitMoaForAdmin}
+        canMarkExecutionComplete={canMarkMoaExecutionComplete}
+        onMarkExecutionComplete={canMarkMoaExecutionComplete ? handleMarkExecutionComplete : undefined}
+        jobHandoffStatus={selectedMoaHandoff}
         moiData={moiDataForMOA}
         initialData={moiDataForMOA}
         viewMode={
-          (Boolean(moiDataForMOA?.workflow) && !userIsInternal)
-          || userIsClientAdmin
+          userIsClientAdmin
           || userIsSignatory
-          || (userIsInternal && Boolean(moiDataForMOA?.sharonApprovedAt))
+          || (SHOW_MOA_SEQUENTIAL_WORKFLOW && Boolean(moiDataForMOA?.workflow) && !userIsInternal)
+          || (userIsInternal && !moaInternallyEditable && !currentUser?.isInternalSignatory && !currentUser?.canApproveMoa)
         }
-        users={apiUsers}
+        users={internalDirectoryUsers}
         customers={formModalCustomers}
         userIsAdmin={userIsAdmin}
         canApproveMoa={Boolean(currentUser?.canApproveMoa)}
         isClientUser={userIsClientAdmin || userIsSignatory}
+        needsMoa={Boolean(currentUser?.needsMoa)}
+        isInternalSignatory={Boolean(currentUser?.isInternalSignatory)}
+        currentUserName={currentUser?.name}
+        signatoryHolderNames={currentUser?.signatoryHolderNames}
+        linkedMoiData={linkedMoiForMoa}
+        jobId={selectedJobRequest?.id}
+        unitNumber={moaHandoffUnitNumber}
+        allowMoaAttachments={moaInternallyEditable || moaExecutingPhase || userIsAdmin || Boolean(currentUser?.canApproveMoa)}
+        onViewLinkedMoi={() => handleViewLinkedMoi()}
       />
       <JobRequestDetailsModal
         isOpen={isJobDetailsModalOpen}
@@ -1326,6 +1657,10 @@ export default function App() {
             <h1>LGB Services</h1>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationBell
+              refreshKey={refreshKey}
+              onOpenJob={(jobId) => void handleOpenTrackerTask(jobId)}
+            />
             <span className="text-sm text-muted-foreground">
               {currentUser.name} ({roleLabel(currentUser.role)})
             </span>
@@ -1368,7 +1703,8 @@ export default function App() {
               <ClientPortal
                 currentUser={currentUser}
                 refreshKey={refreshKey}
-                onOpenForm={handleOpenClientForm}
+                onOpenMoiForm={handleOpenClientMoiForm}
+                onOpenMoaForm={handleOpenClientMoaForm}
                 mode={userIsSignatory ? 'signatory' : 'admin'}
               />
             ) : userIsAdmin ? (
@@ -1379,6 +1715,7 @@ export default function App() {
                   users={assignableUsers}
                   userIsAdmin={userIsAdmin}
                   canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
+                  canApproveMoa={Boolean(currentUser?.canApproveMoa)}
                   refreshKey={refreshKey}
                   onBack={() => setSelectedPackageWork(null)}
                   onOpenTask={handleOpenFormTask}
@@ -1391,11 +1728,13 @@ export default function App() {
                   refreshKey={refreshKey}
                   currentUser={currentUser}
                   assignableUsers={assignableUsers}
+                  secTeamUsers={secTeamUsers}
                   onManagePackage={(customer, pkg) => setSelectedPackageWork({ customer, package: pkg })}
                   onOpenTask={(jobId) => void handleOpenTrackerTask(jobId)}
+                  onViewMoi={(jobId, unitNumber, moiFormId) => void handleViewLinkedMoiFromTracker(jobId, unitNumber, moiFormId)}
                   onViewHistory={() => setIsHistoryModalOpen(true)}
                   onError={showToast}
-                  onSuccess={bumpRefresh}
+                  onSuccess={handleActionSuccess}
                 />
               )
             ) : (
@@ -1403,9 +1742,17 @@ export default function App() {
                 <MyWorkTracker
                   refreshKey={refreshKey}
                   userId={currentUser?.userId}
+                  canApproveMoa={Boolean(currentUser?.canApproveMoa)}
+                  isAdmin={currentUser?.role === 'Admin'}
+                  onMarkExecutionComplete={
+                    (currentUser?.canApproveMoa || currentUser?.role === 'Admin')
+                      ? handleMarkExecutionComplete
+                      : undefined
+                  }
                   onOpenTask={(jobId, _taskType, unitNumber) => void handleOpenTrackerTask(jobId, unitNumber)}
+                  onViewMoi={(jobId, unitNumber, moiFormId) => void handleViewLinkedMoiFromTracker(jobId, unitNumber, moiFormId)}
                   onError={showToast}
-                  onSuccess={bumpRefresh}
+                  onSuccess={handleActionSuccess}
                 />
                 <JobRequestsTable
                   refreshKey={refreshKey}
@@ -1444,6 +1791,7 @@ export default function App() {
               users={apiUsers}
               userIsAdmin={userIsAdmin}
               canApproveIntake={Boolean(currentUser?.canApproveMoiIntake)}
+              canApproveMoa={Boolean(currentUser?.canApproveMoa)}
               refreshKey={refreshKey}
               onBack={() => setSelectedPackageWork(null)}
               onOpenTask={handleOpenFormTask}
@@ -1530,7 +1878,6 @@ export default function App() {
             <AdminSignatoryDedup refreshKey={refreshKey} />
             <AdminWorkflowConfig refreshKey={refreshKey} />
             <AdminFormTemplates refreshKey={refreshKey} />
-            <FormsManagement onViewMOI={openMOICreate} onViewMOA={openMOACreate} />
           </div>
         )}
       </main>

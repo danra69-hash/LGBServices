@@ -15,6 +15,13 @@ export interface PackagePricing {
 /** Fixed MYR price per add-on unit — configured on customers only, not on products. */
 export const ADD_ON_UNIT_PRICE = 120;
 
+/** Non-COSEC customers may purchase add-ons without a base product package. */
+export const ADDONS_ONLY_PACKAGE_NAME = 'Add-ons only';
+
+export function isAddonsOnlyPackageName(name: string): boolean {
+  return name.trim().toLowerCase() === ADDONS_ONLY_PACKAGE_NAME.toLowerCase();
+}
+
 /** Optional services a customer may purchase on top of a package (not core package services). */
 export const ADD_ON_CATALOG: { name: string; unit: string }[] = [
   { name: 'Overseas Support Service', unit: 'Month' },

@@ -24,6 +24,8 @@ public class Customer
     public string LoaHoldersJson { get; set; } = "[]";
     public string? MoiFormTemplateCode { get; set; }
     public string? MoaFormTemplateCode { get; set; }
+    /// <summary>Overrides division default MOA workflow template (MOA_NO_LOA, MOA_WITH_LOA, MOA_SWM).</summary>
+    public string? MoaWorkflowTemplateCode { get; set; }
     public string MoiJson { get; set; } = "[]";
     public string MoiApprovalJson { get; set; } = "[]";
     public string MoaJson { get; set; } = "[]";

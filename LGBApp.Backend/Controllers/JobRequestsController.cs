@@ -58,11 +58,17 @@ public class JobRequestsController : ControllerBase
                 return Ok(Array.Empty<JobRequestResponse>());
             jobs = jobs.Where(j => j.CustomerId == customerId).ToList();
         }
-        else if (!AuthHelper.IsAdmin(User))
+        else
         {
-            jobs = jobs
-                .Where(j => TaskFormVisibilityHelper.CanInternalUserSeeJob(User, j))
-                .ToList();
+            var moisByJobId = await LoadMoisByJobIdAsync(jobs.Select(j => j.JobRequestId));
+            jobs = InternalWorkVisibilityHelper.FilterJobsForInternal(jobs, moisByJobId);
+
+            if (!AuthHelper.IsAdmin(User))
+            {
+                jobs = jobs
+                    .Where(j => TaskFormVisibilityHelper.CanInternalUserSeeJob(User, j))
+                    .ToList();
+            }
         }
 
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();
@@ -77,21 +83,118 @@ public class JobRequestsController : ControllerBase
         if (!userId.HasValue)
             return Ok(Array.Empty<WorkTrackerItemDto>());
 
+        var user = await _context.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.UserId == userId.Value);
+
         var units = await _context.JobRequestUnits
+            .AsNoTracking()
             .Include(u => u.Assignees)
             .ThenInclude(a => a.User)
             .Include(u => u.JobRequest)
             .Where(u => u.Status != "Completed"
-                && u.JobRequest.InternalHandoffStatus != JobHandoffStatuses.ClientSubmitted
                 && (u.AssignedUserId == userId.Value
                     || u.Assignees.Any(a => a.UserId == userId.Value)))
             .OrderBy(u => u.ScheduledDate ?? DateTime.MaxValue)
             .ThenBy(u => u.JobRequest.Customer)
             .ToListAsync();
 
-        return units
-            .Select(u => JobRequestUnitService.ToTrackerDto(u, u.JobRequest))
+        if (units.Count == 0)
+            return Ok(Array.Empty<WorkTrackerItemDto>());
+
+        var jobIds = units.Select(u => u.JobRequestId).Distinct().ToList();
+        var moiForms = await _context.MOIForms
+            .AsNoTracking()
+            .Where(f => f.JobRequestId != null && jobIds.Contains(f.JobRequestId.Value))
+            .ToListAsync();
+
+        units = units
+            .Where(u => InternalWorkVisibilityHelper.IsUnitReleasedToInternal(
+                u.JobRequest,
+                u,
+                InternalWorkVisibilityHelper.ResolveMoiForUnit(
+                    moiForms.Where(f => f.JobRequestId == u.JobRequestId),
+                    u,
+                    u.JobRequest)))
             .ToList();
+
+        if (units.Count == 0)
+            return Ok(Array.Empty<WorkTrackerItemDto>());
+
+        jobIds = units.Select(u => u.JobRequestId).Distinct().ToList();
+        if (jobIds.Count == 0)
+            return Ok(Array.Empty<WorkTrackerItemDto>());
+
+        var jobs = await _context.JobRequests
+            .AsNoTracking()
+            .Include(j => j.Units)
+            .ThenInclude(u => u.Assignees)
+            .Where(j => jobIds.Contains(j.JobRequestId))
+            .ToDictionaryAsync(j => j.JobRequestId);
+
+        var moaForms = await _context.MOAForms
+            .AsNoTracking()
+            .Where(f => f.JobRequestId != null && jobIds.Contains(f.JobRequestId.Value))
+            .ToListAsync();
+
+        var items = new List<WorkTrackerItemDto>(units.Count);
+        foreach (var unit in units)
+        {
+            if (!jobs.TryGetValue(unit.JobRequestId, out var job))
+                continue;
+
+            var moi = ResolveMoiForUnit(moiForms, unit, job.TotalQty);
+            var moa = ResolveMoaForUnit(moaForms, unit, job.TotalQty);
+
+            var item = JobRequestUnitService.ToTrackerDto(unit, job);
+            item.HasMoiForm = moi != null;
+            item.HasMoaForm = moa != null;
+            item.MoiFormId = moi?.MOIFormId;
+            item.MoiWorkflowState = moi?.WorkflowState;
+            item.RequiredExecutionDate = MoiFormMetadataHelper.ReadRequiredExecutionDate(moi);
+
+            var display = PackageItemStatusResolver.ResolveForUnit(job, unit, moi);
+            item.DisplayStatus = display.Label;
+            item.DisplayStatusKey = display.Key;
+
+            if (moa != null && TaskFormVisibilityHelper.CanViewMoaForm(User, job, moa, moi))
+            {
+                item.LinkedFormKind = "MOA";
+                item.LinkedFormId = moa.MOAFormId;
+            }
+            else if (!TaskFormVisibilityHelper.ShouldPreferMoaOverMoi(job, moi, unit.InternalHandoffStatus)
+                && moi != null
+                && TaskFormVisibilityHelper.CanViewMoiForm(User, job, moi))
+            {
+                item.LinkedFormKind = "MOI";
+                item.LinkedFormId = moi.MOIFormId;
+            }
+
+            items.Add(item);
+        }
+
+        return items;
+    }
+
+    private static MOIForm? ResolveMoiForUnit(List<MOIForm> mois, JobRequestUnit unit, int totalQty)
+    {
+        var byUnit = mois.FirstOrDefault(f => f.JobRequestUnitId == unit.JobRequestUnitId);
+        if (byUnit != null)
+            return byUnit;
+
+        return totalQty <= 1
+            ? mois.FirstOrDefault(f => f.JobRequestUnitId == null)
+            : null;
+    }
+
+    private static MOAForm? ResolveMoaForUnit(List<MOAForm> moas, JobRequestUnit unit, int totalQty)
+    {
+        var byUnit = moas.FirstOrDefault(f => f.JobRequestUnitId == unit.JobRequestUnitId);
+        if (byUnit != null)
+            return byUnit;
+
+        return totalQty <= 1
+            ? moas.FirstOrDefault(f => f.JobRequestUnitId == null)
+            : null;
     }
 
     [HttpGet("{id}")]
@@ -148,7 +251,7 @@ public class JobRequestsController : ControllerBase
     [HttpPost("{id}/approve-intake")]
     public async Task<ActionResult<JobRequestResponse>> ApproveMoiIntake(int id, [FromQuery] int? unitNumber = null)
     {
-        if (!AuthHelper.CanApproveMoiIntake(User))
+        if (!AuthHelper.CanApproveMoiIntake(User) && !AuthHelper.CanApproveMoi(User))
             return Forbid();
 
         var job = await JobQuery().FirstOrDefaultAsync(j => j.JobRequestId == id);
@@ -220,10 +323,24 @@ public class JobRequestsController : ControllerBase
         if (unit == null)
             return BadRequest(new { message = "No unit available to assign." });
 
+        var moiForms = await _context.MOIForms
+            .Where(f => f.JobRequestId == id)
+            .ToListAsync();
+        var moi = ResolveMoiForUnit(moiForms, unit, job.TotalQty);
+        var previousUnit = job.Units.FirstOrDefault(u => u.UnitNumber == unit.UnitNumber - 1);
+        var previousMoi = previousUnit != null
+            ? ResolveMoiForUnit(moiForms, previousUnit, job.TotalQty)
+            : null;
+        if (!UnitAssignmentGate.CanAssignUnit(job, unit, job.Units.ToList(), moi, previousMoi))
+            return BadRequest(new { message = "This session is not ready for team assignment yet. Complete the prior session's MOI first." });
+
         if (request.Remove)
             await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, user.UserId);
         else
+        {
             await JobRequestUnitService.AddAssigneeAsync(_context, unit, user);
+            await JobHandoffService.OnSecretarialStaffAssignedToUnitAsync(_context, job, unit, moi);
+        }
 
         if (!string.IsNullOrWhiteSpace(request.Comments))
             job.AssignmentComments = request.Comments;
@@ -265,40 +382,90 @@ public class JobRequestsController : ControllerBase
                 job.Status = "In Progress";
                 break;
             case "submit-admin-review":
-                if (!isAdmin && !AuthHelper.IsInternalStaff(User)) return Forbid();
-                JobHandoffService.SetHandoff(job, JobHandoffStatuses.AdminReview);
+            {
+                if (!isAdmin && !AuthHelper.CanAccessJob(User, job))
+                    return Forbid();
+
+                var submitUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
+                if (job.TotalQty > 1 && !submitUnitNumber.HasValue)
+                    return BadRequest("unitNumber is required for multi-session MOA submission.");
+
+                var moaForSubmit = await ResolveMoaFormForHandoffAsync(job, submitUnitNumber);
+                if (moaForSubmit == null)
+                    return BadRequest("Save the MOA draft before submitting for admin approval.");
+
+                var submitUnit = JobHandoffResolver.ResolveUnit(job, submitUnitNumber, moaForSubmit);
+                MOIForm? linkedMoi = moaForSubmit.MOIFormId.HasValue
+                    ? await _context.MOIForms.FindAsync(moaForSubmit.MOIFormId.Value)
+                    : null;
+                if (!JobHandoffResolver.IsMoaDraftSubmittable(job, submitUnit, moaForSubmit, linkedMoi))
+                    return BadRequest("MOA draft can only be submitted while preparation is in progress.");
+
+                var (submitValid, submitErrors) = MoaPackChecklistService.Validate(moaForSubmit);
+                if (!submitValid)
+                    return BadRequest(new { message = "Complete the MOA pack checklist before submitting.", errors = submitErrors });
+
+                await JobHandoffService.OnMoaSubmittedForAdminReviewAsync(_context, job, moaForSubmit, submitUnit);
                 break;
+            }
             case "sharon-approve-moa":
+            {
                 if (!AuthHelper.CanApproveMoa(User)) return Forbid();
-                var moaForm = await _context.MOAForms.FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId);
-                if (moaForm != null)
-                {
-                    var (packValid, packErrors) = MoaPackChecklistService.Validate(moaForm);
-                    if (!packValid)
-                        return BadRequest(new { message = "MOA pack checklist incomplete.", errors = packErrors });
-                }
-                await JobHandoffService.OnSharonMoaApprovedAsync(_context, job, moaForm);
+                var approveUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
+                if (job.TotalQty > 1 && !approveUnitNumber.HasValue)
+                    return BadRequest("unitNumber is required for multi-session MOA approval.");
+
+                var moaForm = await ResolveMoaFormForHandoffAsync(job, approveUnitNumber);
+                if (moaForm == null)
+                    return BadRequest("No MOA form found for this task.");
+
+                var (packValid, packErrors) = MoaPackChecklistService.Validate(moaForm);
+                if (!packValid)
+                    return BadRequest(new { message = "MOA pack checklist incomplete.", errors = packErrors });
+
+                var approveUnit = JobHandoffResolver.ResolveUnit(job, approveUnitNumber, moaForm);
+                await JobHandoffService.OnSharonMoaApprovedAsync(_context, job, moaForm, approveUnit);
                 break;
+            }
             case "approve-for-moa":
+            {
                 if (!isAdmin && !AuthHelper.CanApproveMoa(User))
                     return Forbid();
-                await JobHandoffService.AdvanceToReadyForMoaAsync(_context, job);
+                var releaseUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
+                if (job.TotalQty > 1 && !releaseUnitNumber.HasValue)
+                    return BadRequest("unitNumber is required for multi-session MOA release.");
+
+                var moaForRelease = await ResolveMoaFormForHandoffAsync(job, releaseUnitNumber);
+                var releaseUnit = JobHandoffResolver.ResolveUnit(job, releaseUnitNumber, moaForRelease);
+                await JobHandoffService.AdvanceToReadyForMoaAsync(_context, job, releaseUnit, moaForRelease);
                 job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
                 return Ok(JobRequestMapper.ToResponse(job));
+            }
             case "reject-moa":
+            {
                 if (!AuthHelper.CanApproveMoa(User) && !isAdmin)
                     return Forbid();
-                if (job.InternalHandoffStatus != JobHandoffStatuses.AdminReview)
-                    return BadRequest("MOA can only be rejected by Sharon while awaiting head secretary review.");
-                var moaToReject = await _context.MOAForms.FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId);
+                var rejectUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
+                if (job.TotalQty > 1 && !rejectUnitNumber.HasValue)
+                    return BadRequest("unitNumber is required for multi-session MOA rejection.");
+
+                var moaToReject = await ResolveMoaFormForHandoffAsync(job, rejectUnitNumber);
                 if (moaToReject == null)
                     return BadRequest("No MOA form found for this task.");
+
+                var rejectUnit = JobHandoffResolver.ResolveUnit(job, rejectUnitNumber, moaToReject);
+                var rejectHandoff = JobHandoffResolver.ResolveEffectiveHandoff(job, rejectUnit, moaToReject);
+                if (rejectHandoff != JobHandoffStatuses.AdminReview)
+                    return BadRequest("MOA can only be rejected by Sharon while awaiting head secretary review.");
+
                 var rejectUser = await _context.Users.FindAsync(AuthHelper.CurrentUserId(User) ?? 0);
                 if (rejectUser == null) return Unauthorized();
                 if (string.IsNullOrWhiteSpace(request.Comments))
                     return BadRequest("A rejection reason is required.");
-                await JobHandoffService.OnMoaSharonRejectedAsync(_context, job, moaToReject, rejectUser, request.Comments!);
+                await JobHandoffService.OnMoaSharonRejectedAsync(
+                    _context, job, moaToReject, rejectUser, request.Comments!, rejectUnit);
                 break;
+            }
             default:
                 return BadRequest("Unknown handoff action.");
         }
@@ -335,10 +502,13 @@ public class JobRequestsController : ControllerBase
             return BadRequest(new { message = "Unit not found." });
 
         var isAdmin = AuthHelper.IsAdmin(User);
+        var actorId = AuthHelper.CurrentUserId(User);
+
         if (!isAdmin)
         {
-            var userId = AuthHelper.CurrentUserId(User);
-            if (!userId.HasValue || !JobRequestUnitService.IsUserAssigned(unit, userId.Value))
+            if (!actorId.HasValue)
+                return Forbid();
+            if (!JobRequestUnitService.IsUserAssigned(unit, actorId.Value))
                 return Forbid();
         }
 
@@ -364,28 +534,51 @@ public class JobRequestsController : ControllerBase
         if (request.MarkUnitComplete && request.MarkUnitIncomplete)
             return BadRequest(new { message = "Cannot mark a unit complete and incomplete in the same request." });
 
+        var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit);
+        if (request.MarkUnitComplete || request.MarkUnitIncomplete)
+        {
+            if (handoff is JobHandoffStatuses.ReadyForMoa or JobHandoffStatuses.MoaCirculation)
+            {
+                return BadRequest(new
+                {
+                    message = "This item must be completed via MOA sign-off, not manual progress.",
+                });
+            }
+        }
+
         if (request.MarkUnitComplete)
         {
-            unit.Status = "Completed";
-            unit.CompletedAt = DateTime.UtcNow;
-            await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
-            await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
-
-            if (job.Status == "Completed")
+            if (handoff is JobHandoffStatuses.PendingExecute or JobHandoffStatuses.ExecutionSecComplete)
             {
-                _context.CompletedServices.Add(new CompletedService
+                if (!isAdmin && !AuthHelper.CanApproveMoa(User))
+                    return Forbid();
+
+                var moaForm = await ResolveMoaFormForHandoffAsync(job, unitNumber);
+                await JobHandoffService.OnExecutionCompletedAsync(_context, job, unit, moaForm);
+            }
+            else
+            {
+                unit.Status = "Completed";
+                unit.CompletedAt = DateTime.UtcNow;
+                await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
+                await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
+
+                if (job.Status == "Completed")
                 {
-                    Customer = job.Customer,
-                    Service = job.Service,
-                    UsedQty = job.UsedQty,
-                    TotalQty = job.TotalQty,
-                    DateRequested = job.DateRequested,
-                    DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
-                    AccountHolder = job.AccountHolder,
-                    JobAssignedTo = job.JobAssignedTo,
-                    Status = "Completed",
-                    CreatedAt = DateTime.UtcNow
-                });
+                    _context.CompletedServices.Add(new CompletedService
+                    {
+                        Customer = job.Customer,
+                        Service = job.Service,
+                        UsedQty = job.UsedQty,
+                        TotalQty = job.TotalQty,
+                        DateRequested = job.DateRequested,
+                        DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
+                        AccountHolder = job.AccountHolder,
+                        JobAssignedTo = job.JobAssignedTo,
+                        Status = "Completed",
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
         }
         else if (request.MarkUnitIncomplete)
@@ -407,7 +600,9 @@ public class JobRequestsController : ControllerBase
 
         await _context.SaveChangesAsync();
         job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
-        return Ok(JobRequestMapper.ToResponse(job));
+        var progressResponse = JobRequestMapper.ToResponse(job);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [progressResponse], User);
+        return Ok(progressResponse);
     }
 
     [HttpPut("{id}")]
@@ -496,5 +691,58 @@ public class JobRequestsController : ControllerBase
             .Where(f => f.JobRequestId == job.JobRequestId)
             .OrderByDescending(f => f.UpdatedAt)
             .FirstOrDefaultAsync();
+    }
+
+    private async Task<int?> ResolveMoaHandoffUnitNumberAsync(JobRequest job, int? requestedUnitNumber)
+    {
+        if (requestedUnitNumber.HasValue)
+            return requestedUnitNumber;
+        if (job.TotalQty <= 1)
+            return 1;
+
+        var moa = await _context.MOAForms
+            .Where(f => f.JobRequestId == job.JobRequestId && f.JobRequestUnitId != null)
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
+        if (moa?.JobRequestUnitId is int unitId)
+            return job.Units.FirstOrDefault(u => u.JobRequestUnitId == unitId)?.UnitNumber;
+
+        return null;
+    }
+
+    private async Task<MOAForm?> ResolveMoaFormForHandoffAsync(JobRequest job, int? unitNumber = null)
+    {
+        if (unitNumber.HasValue && job.TotalQty > 1)
+        {
+            var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+            if (unit != null)
+            {
+                return await _context.MOAForms
+                    .Where(f => f.JobRequestId == job.JobRequestId && f.JobRequestUnitId == unit.JobRequestUnitId)
+                    .OrderByDescending(f => f.UpdatedAt)
+                    .FirstOrDefaultAsync();
+            }
+        }
+
+        return await _context.MOAForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
+    }
+
+    private async Task<Dictionary<int, List<MOIForm>>> LoadMoisByJobIdAsync(IEnumerable<int> jobIds)
+    {
+        var ids = jobIds.Distinct().ToList();
+        if (ids.Count == 0)
+            return [];
+
+        var mois = await _context.MOIForms
+            .AsNoTracking()
+            .Where(f => f.JobRequestId != null && ids.Contains(f.JobRequestId.Value))
+            .ToListAsync();
+
+        return mois
+            .GroupBy(f => f.JobRequestId!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
     }
 }

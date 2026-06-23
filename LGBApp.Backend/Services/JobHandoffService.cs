@@ -13,13 +13,16 @@ public static class JobHandoffStatuses
     public const string MoaSharonApproved = "MoaSharonApproved";
     public const string ReadyForMoa = "ReadyForMoa";
     public const string MoaCirculation = "MoaCirculation";
+    /// <summary>MOI signed off by head sec — awaiting secretarial team assignment.</summary>
+    public const string AwaitingSecAssignment = "AwaitingSecAssignment";
     public const string PendingExecute = "PendingExecute";
+    public const string ExecutionSecComplete = "ExecutionSecComplete";
     public const string Completed = "Completed";
 
     public static readonly string[] Ordered =
     [
-        ClientSubmitted, PendingPrep, ResoInProgress, AdminReview,
-        MoaSharonApproved, ReadyForMoa, MoaCirculation, PendingExecute, Completed,
+        ClientSubmitted, AwaitingSecAssignment, PendingPrep, ResoInProgress, AdminReview,
+        MoaSharonApproved, ReadyForMoa, MoaCirculation, Completed,
     ];
 }
 
@@ -132,54 +135,43 @@ public static class JobHandoffService
             doc.VisibleToInternal = true;
 
         await context.SaveChangesAsync();
+        await WorkflowNotificationService.NotifyMoiSubmittedAsync(context, job);
+
+        if (unit == null && form.JobRequestUnitId.HasValue)
+            unit = await context.JobRequestUnits.FindAsync(form.JobRequestUnitId.Value);
+        if (unit == null)
+        {
+            await context.Entry(job).Collection(j => j.Units).LoadAsync();
+            unit = job.Units.OrderBy(u => u.UnitNumber).FirstOrDefault();
+        }
+
+        if (unit?.ScheduledDate.HasValue == true)
+            await JobRequestUnitService.SyncUnitToTrackerAsync(context, unit, job);
     }
 
     public static async Task OnMoiIntakeApprovedAsync(AppDbContext context, JobRequest job, int? unitNumber = null)
     {
-        job.Status = "In Progress";
-
+        MOIForm? moiForm;
         if (unitNumber.HasValue && job.TotalQty > 1)
         {
             var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value)
-                ?? throw new InvalidOperationException("Session not found for intake approval.");
-
-            unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
-
-            var moiForm = await context.MOIForms
+                ?? throw new InvalidOperationException("Session not found for MOI sign-off.");
+            moiForm = await context.MOIForms
                 .Where(f => f.JobRequestId == job.JobRequestId && f.JobRequestUnitId == unit.JobRequestUnitId)
                 .FirstOrDefaultAsync();
-            if (moiForm != null)
-            {
-                moiForm.WorkflowState = MoiWorkflowStates.PendingPrep;
-                moiForm.UpdatedAt = DateTime.UtcNow;
-            }
-
-            if (!job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)))
-                SetHandoff(job, JobHandoffStatuses.PendingPrep);
         }
         else
         {
-            SetHandoff(job, JobHandoffStatuses.PendingPrep);
-            foreach (var unit in job.Units)
-            {
-                if (string.Equals(unit.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
-                    unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
-            }
-
-            var moiForms = await context.MOIForms
+            moiForm = await context.MOIForms
                 .Where(f => f.JobRequestId == job.JobRequestId)
-                .ToListAsync();
-            foreach (var moiForm in moiForms)
-            {
-                if (moiForm.WorkflowState is MoiWorkflowStates.PendingAdminIntake or MoiWorkflowStates.Draft)
-                {
-                    moiForm.WorkflowState = MoiWorkflowStates.PendingPrep;
-                    moiForm.UpdatedAt = DateTime.UtcNow;
-                }
-            }
+                .OrderByDescending(f => f.UpdatedAt)
+                .FirstOrDefaultAsync();
         }
 
-        await context.SaveChangesAsync();
+        if (moiForm == null)
+            throw new InvalidOperationException("No MOI form found for sign-off.");
+
+        await OnMoiSharonSignOffAsync(context, job, moiForm, unitNumber);
     }
 
     public static async Task OnJobAcceptedAsync(AppDbContext context, JobRequest job)
@@ -203,34 +195,192 @@ public static class JobHandoffService
             .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId.Value);
         if (job == null) return;
 
-        form.WorkflowState = MoiWorkflowStates.Approved;
+        form.WorkflowState = MoiWorkflowStates.PendingRecommendation;
         form.UpdatedAt = DateTime.UtcNow;
         job.Status = "In Progress";
 
         if (form.JobRequestUnitId.HasValue && job.TotalQty > 1)
         {
             var unit = job.Units.FirstOrDefault(u => u.JobRequestUnitId == form.JobRequestUnitId.Value);
-            if (unit != null)
-                unit.InternalHandoffStatus = JobHandoffStatuses.AdminReview;
+            if (unit != null
+                && (string.IsNullOrWhiteSpace(unit.InternalHandoffStatus)
+                    || unit.InternalHandoffStatus is JobHandoffStatuses.PendingPrep))
+                unit.InternalHandoffStatus = JobHandoffStatuses.ResoInProgress;
+        }
+        else if (string.IsNullOrWhiteSpace(job.InternalHandoffStatus)
+            || job.InternalHandoffStatus is JobHandoffStatuses.PendingPrep)
+            SetHandoff(job, JobHandoffStatuses.ResoInProgress);
+
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>Head secretary MOI sign-off — enter resolution prep and provision MOA immediately.</summary>
+    public static async Task OnMoiSharonSignOffAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOIForm form,
+        int? unitNumber = null)
+    {
+        form.WorkflowState = MoiWorkflowStates.PendingPrep;
+        form.UpdatedAt = DateTime.UtcNow;
+        job.Status = "In Progress";
+
+        if (unitNumber.HasValue && job.TotalQty > 1)
+        {
+            var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value)
+                ?? throw new InvalidOperationException("Session not found for MOI sign-off.");
+            unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+
+            if (!job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)))
+                SetHandoff(job, JobHandoffStatuses.PendingPrep);
         }
         else
-            SetHandoff(job, JobHandoffStatuses.AdminReview);
+        {
+            SetHandoff(job, JobHandoffStatuses.PendingPrep);
+            foreach (var unit in job.Units)
+            {
+                if (string.Equals(unit.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
+                    unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+            }
+        }
 
-        await JobFormProvisioner.EnsureMoaFormForMoiAsync(context, job, form);
         await context.SaveChangesAsync();
+        await JobFormProvisioner.EnsureMoaFormForMoiAsync(context, job, form);
+        await WorkflowNotificationService.NotifyIntakeApprovedAsync(context, job);
     }
 
     public static async Task OnMoiApprovedAsync(AppDbContext context, MOIForm form)
     {
-        await OnMoiRecommendedAsync(context, form);
+        if (!form.JobRequestId.HasValue) return;
+        var job = await context.JobRequests
+            .Include(j => j.Units)
+            .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId.Value);
+        if (job == null) return;
+
+        int? unitNumber = null;
+        if (form.JobRequestUnitId.HasValue && job.TotalQty > 1)
+        {
+            unitNumber = job.Units
+                .FirstOrDefault(u => u.JobRequestUnitId == form.JobRequestUnitId.Value)
+                ?.UnitNumber;
+        }
+
+        await OnMoiSharonSignOffAsync(context, job, form, unitNumber);
     }
 
-    public static async Task OnSharonMoaApprovedAsync(AppDbContext context, JobRequest job, MOAForm? moaForm)
+    public static async Task OnSecretarialTeamAssignedAsync(AppDbContext context, JobRequest job)
     {
-        if (job.InternalHandoffStatus != JobHandoffStatuses.AdminReview)
+        job.Status = "In Progress";
+
+        if (job.TotalQty > 1)
+        {
+            foreach (var unit in job.Units)
+            {
+                if (string.Equals(unit.InternalHandoffStatus, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase))
+                    unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+            }
+
+            if (!job.Units.Any(u => string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase)))
+                SetHandoff(job, JobHandoffStatuses.PendingPrep);
+        }
+        else
+        {
+            SetHandoff(job, JobHandoffStatuses.PendingPrep);
+            foreach (var unit in job.Units)
+                unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+        }
+
+        var moiForms = await context.MOIForms
+            .Where(f => f.JobRequestId == job.JobRequestId)
+            .ToListAsync();
+        foreach (var moiForm in moiForms)
+        {
+            if (string.Equals(moiForm.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase))
+            {
+                moiForm.WorkflowState = MoiWorkflowStates.PendingPrep;
+                moiForm.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+
+        await context.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// When secretarial staff are tagged on a unit, start MOA prep for that session immediately.
+    /// </summary>
+    public static async Task OnSecretarialStaffAssignedToUnitAsync(
+        AppDbContext context,
+        JobRequest job,
+        JobRequestUnit unit,
+        MOIForm? moi)
+    {
+        if (moi == null)
+            return;
+
+        var moiApproved = string.Equals(moi.WorkflowState, MoiWorkflowStates.Approved, StringComparison.OrdinalIgnoreCase);
+        var moiInPrep = moi.WorkflowState is MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation;
+        if (!moiApproved && !moiInPrep)
+            return;
+
+        if (moiApproved)
+        {
+            moi.WorkflowState = MoiWorkflowStates.PendingPrep;
+            moi.UpdatedAt = DateTime.UtcNow;
+        }
+
+        var unitHandoff = unit.InternalHandoffStatus ?? string.Empty;
+        if (string.Equals(unitHandoff, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase)
+            || (string.IsNullOrWhiteSpace(unitHandoff)
+                && string.Equals(job.InternalHandoffStatus, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase)))
+        {
+            unit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+        }
+
+        if (job.TotalQty <= 1)
+        {
+            SetHandoff(job, JobHandoffStatuses.PendingPrep);
+            foreach (var jobUnit in job.Units)
+                jobUnit.InternalHandoffStatus = JobHandoffStatuses.PendingPrep;
+        }
+        else if (!job.Units.Any(u =>
+            string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(u.InternalHandoffStatus, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase)))
+        {
+            SetHandoff(job, JobHandoffStatuses.PendingPrep);
+        }
+
+        if (job.Status == "Pending")
+            job.Status = "In Progress";
+
+        await JobFormProvisioner.EnsureMoaFormForMoiAsync(context, job, moi);
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnMoaSubmittedForAdminReviewAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOAForm form,
+        JobRequestUnit? unit = null)
+    {
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.AdminReview);
+
+        form.SubmittedForAdminReviewAt = DateTime.UtcNow;
+        form.UpdatedAt = DateTime.UtcNow;
+        job.Status = "In Progress";
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnSharonMoaApprovedAsync(
+        AppDbContext context,
+        JobRequest job,
+        MOAForm? moaForm,
+        JobRequestUnit? unit = null)
+    {
+        var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, moaForm);
+        if (handoff != JobHandoffStatuses.AdminReview)
             throw new InvalidOperationException("MOA must be in head secretary review before approval.");
 
-        SetHandoff(job, JobHandoffStatuses.MoaSharonApproved);
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.MoaSharonApproved);
         if (moaForm != null)
         {
             moaForm.SharonApprovedAt = DateTime.UtcNow;
@@ -239,35 +389,93 @@ public static class JobHandoffService
         await context.SaveChangesAsync();
     }
 
-    public static async Task AdvanceToReadyForMoaAsync(AppDbContext context, JobRequest job)
+    public static async Task AdvanceToReadyForMoaAsync(
+        AppDbContext context,
+        JobRequest job,
+        JobRequestUnit? unit = null,
+        MOAForm? moaForm = null)
     {
-        if (job.InternalHandoffStatus != JobHandoffStatuses.MoaSharonApproved)
+        var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, moaForm);
+        if (handoff != JobHandoffStatuses.MoaSharonApproved)
             throw new InvalidOperationException("MOA must be approved by Sharon before release to client.");
 
-        SetHandoff(job, JobHandoffStatuses.ReadyForMoa);
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.ReadyForMoa);
         job.Status = "In Progress";
         await context.SaveChangesAsync();
+
+        var customer = job.CustomerId.HasValue
+            ? await context.Customers.Include(c => c.AccountHolders)
+                .FirstOrDefaultAsync(c => c.CustomerId == job.CustomerId.Value)
+            : await WorkflowService.ResolveCustomerForCompanyAsync(context, job.Customer);
+        if (customer != null)
+            await WorkflowNotificationService.NotifyMoaReadyForClientAsync(context, job, customer);
     }
 
     public static async Task OnClientMoaApprovalRecordedAsync(
         AppDbContext context,
         JobRequest job,
         MOAForm form,
-        Customer customer)
+        Customer customer,
+        JobRequestUnit? unit = null)
     {
         var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
         var records = ClientApprovalService.ParseMoa(form);
         if (!ClientApprovalService.MoaClientPhaseComplete(customer, records))
         {
-            SetHandoff(job, JobHandoffStatuses.MoaCirculation);
+            JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.MoaCirculation);
             form.UpdatedAt = DateTime.UtcNow;
             await context.SaveChangesAsync();
             return;
         }
 
-        SetHandoff(job, JobHandoffStatuses.PendingExecute);
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.PendingExecute);
         job.Status = "In Progress";
+        if (unit != null && unit.Status != "Completed")
+            unit.Status = "In Progress";
         form.UpdatedAt = DateTime.UtcNow;
+
+        await context.SaveChangesAsync();
+    }
+
+    public static async Task OnExecutionCompletedAsync(
+        AppDbContext context,
+        JobRequest job,
+        JobRequestUnit? unit = null,
+        MOAForm? form = null)
+    {
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.Completed);
+        if (unit != null)
+        {
+            unit.Status = "Completed";
+            unit.CompletedAt = DateTime.UtcNow;
+            await JobRequestUnitService.SyncUnitToTrackerAsync(context, unit, job);
+        }
+
+        if (form != null)
+            form.UpdatedAt = DateTime.UtcNow;
+
+        await JobRequestUnitService.RefreshJobAggregateAsync(context, job);
+
+        if (job.Status == "Completed")
+        {
+            context.CompletedServices.Add(new CompletedService
+            {
+                Customer = job.Customer,
+                Service = job.Service,
+                UsedQty = job.UsedQty,
+                TotalQty = job.TotalQty,
+                DateRequested = job.DateRequested,
+                DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
+                AccountHolder = job.AccountHolder,
+                JobAssignedTo = job.JobAssignedTo,
+                Status = "Completed",
+                CreatedAt = DateTime.UtcNow,
+            });
+
+            await context.SaveChangesAsync();
+            await WorkflowNotificationService.NotifyJobCompletedAsync(context, job);
+            return;
+        }
 
         await context.SaveChangesAsync();
     }
@@ -275,13 +483,16 @@ public static class JobHandoffService
     public static async Task OnMoaWorkflowStartedAsync(AppDbContext context, MOAForm form)
     {
         if (!form.JobRequestId.HasValue) return;
-        var job = await context.JobRequests.FindAsync(form.JobRequestId.Value);
+        var job = await context.JobRequests
+            .Include(j => j.Units)
+            .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId.Value);
         if (job == null) return;
-        // Internal LGB routing only — client circulation starts after Sharon releases (ReadyForMoa).
-        if (string.IsNullOrWhiteSpace(job.InternalHandoffStatus)
-            || job.InternalHandoffStatus is JobHandoffStatuses.PendingPrep
-                or JobHandoffStatuses.ResoInProgress)
-            SetHandoff(job, JobHandoffStatuses.AdminReview);
+
+        var unit = JobHandoffResolver.ResolveUnit(job, null, form);
+        var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, form);
+        if (JobHandoffResolver.IsMoaPrepHandoff(handoff) || string.IsNullOrWhiteSpace(handoff))
+            JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.ResoInProgress);
+
         job.Status = "In Progress";
         await context.SaveChangesAsync();
     }
@@ -366,9 +577,11 @@ public static class JobHandoffService
         JobRequest job,
         MOAForm form,
         User user,
-        string reason)
+        string reason,
+        JobRequestUnit? unit = null)
     {
         form.SharonApprovedAt = null;
+        form.SubmittedForAdminReviewAt = null;
         form.UpdatedAt = DateTime.UtcNow;
         FormRejectionService.AddMoaRejection(form, new FormRejectionRecord
         {
@@ -379,7 +592,7 @@ public static class JobHandoffService
             RejectedAt = DateTime.UtcNow,
         });
 
-        SetHandoff(job, JobHandoffStatuses.AdminReview);
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.ResoInProgress);
         job.Status = "In Progress";
         await context.SaveChangesAsync();
     }
@@ -389,10 +602,12 @@ public static class JobHandoffService
         JobRequest job,
         MOAForm form,
         User user,
-        string reason)
+        string reason,
+        JobRequestUnit? unit = null)
     {
         form.ClientApprovalsJson = "[]";
         form.SharonApprovedAt = null;
+        form.SubmittedForAdminReviewAt = null;
         form.UpdatedAt = DateTime.UtcNow;
         FormRejectionService.AddMoaRejection(form, new FormRejectionRecord
         {
@@ -403,7 +618,7 @@ public static class JobHandoffService
             RejectedAt = DateTime.UtcNow,
         });
 
-        SetHandoff(job, JobHandoffStatuses.AdminReview);
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.ResoInProgress);
         job.Status = "In Progress";
         await context.SaveChangesAsync();
     }
@@ -413,13 +628,18 @@ public static class JobHandoffService
         var form = await context.MOAForms.FindAsync(moaFormId);
         if (form?.JobRequestId == null) return;
 
-        var job = await context.JobRequests.FindAsync(form.JobRequestId.Value);
+        var job = await context.JobRequests
+            .Include(j => j.Units)
+            .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId.Value);
         if (job == null) return;
 
-        SetHandoff(job, JobHandoffStatuses.Completed);
-        job.Status = "Completed";
-        job.UsedQty = Math.Max(job.UsedQty, 1);
-        job.DateCompleted = DateTime.UtcNow;
+        var unit = JobHandoffResolver.ResolveUnit(job, null, form);
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.PendingExecute);
+        job.Status = "In Progress";
+        if (unit != null && unit.Status != "Completed")
+            unit.Status = "In Progress";
+        form.UpdatedAt = DateTime.UtcNow;
+
         await context.SaveChangesAsync();
     }
 }

@@ -79,6 +79,11 @@ public static class UserMapper
             response.NeedsMoi = holders.Any(h => h.NeedsMoi);
             response.NeedsMoiApproval = holders.Any(h => h.NeedsMoiApproval);
             response.NeedsMoa = holders.Any(h => h.NeedsMoa);
+            response.SignatoryHolderNames = holders
+                .Select(h => h.Name.Trim())
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             return;
         }
 

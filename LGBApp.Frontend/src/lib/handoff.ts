@@ -6,7 +6,8 @@ export const HANDOFF_LABELS: Record<string, string> = {
   MoaSharonApproved: 'MOA approved (internal)',
   ReadyForMoa: 'Ready for MOA',
   MoaCirculation: 'MOA circulation',
-  PendingExecute: 'Pending execute',
+  PendingExecute: 'Executing',
+  ExecutionSecComplete: 'Executing',
   Completed: 'Completed',
 };
 

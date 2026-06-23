@@ -30,6 +30,8 @@ public class AppDbContext : DbContext
     public DbSet<BillingParty> BillingParties { get; set; }
     public DbSet<JobItemDocument> JobItemDocuments { get; set; }
     public DbSet<SignatoryCustomerAccess> SignatoryCustomerAccess { get; set; }
+    public DbSet<AppNotification> AppNotifications { get; set; }
+    public DbSet<Invoice> Invoices { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(entity =>
@@ -64,6 +66,7 @@ public class AppDbContext : DbContext
             entity.Property(c => c.DivisionGroupCode).HasMaxLength(50);
             entity.Property(c => c.MoiFormTemplateCode).HasMaxLength(50);
             entity.Property(c => c.MoaFormTemplateCode).HasMaxLength(50);
+            entity.Property(c => c.MoaWorkflowTemplateCode).HasMaxLength(50);
             entity.Property(c => c.MoiApprovalMode).HasMaxLength(50).HasDefaultValue(MoiApprovalModes.AllRequired);
             entity.Property(c => c.InvoiceByPartyIdsJson).HasDefaultValue("[]");
             entity.Property(c => c.ChargeToPartyIdsJson).HasDefaultValue("[]");
@@ -322,6 +325,23 @@ public class AppDbContext : DbContext
                 .WithMany(i => i.Steps)
                 .HasForeignKey(s => s.WorkflowInstanceId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AppNotification>(entity =>
+        {
+            entity.HasKey(n => n.AppNotificationId);
+            entity.Property(n => n.EventType).HasMaxLength(50);
+            entity.Property(n => n.Title).HasMaxLength(200);
+            entity.HasIndex(n => new { n.UserId, n.IsRead });
+        });
+
+        modelBuilder.Entity<Invoice>(entity =>
+        {
+            entity.HasKey(i => i.InvoiceId);
+            entity.Property(i => i.InvoiceNumber).HasMaxLength(50);
+            entity.Property(i => i.Currency).HasMaxLength(10);
+            entity.Property(i => i.Status).HasMaxLength(50);
+            entity.HasIndex(i => i.InvoiceNumber).IsUnique();
         });
     }
 }

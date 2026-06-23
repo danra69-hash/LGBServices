@@ -28,8 +28,10 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
-    public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
+    public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request, IWebHostEnvironment env)
     {
+        if (!env.IsDevelopment())
+            return NotFound();
         if (await _context.Users.AnyAsync(u => u.Email == request.Email))
             return Conflict("Email is already registered.");
 
@@ -58,10 +60,11 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
     {
+        var email = request.Email.Trim();
         var user = await _context.Users
             .Include(u => u.Customer!)
             .ThenInclude(c => c.AccountHolders)
-            .FirstOrDefaultAsync(u => u.Email == request.Email);
+            .FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower());
         if (user == null || !PasswordHasher.Verify(request.Password, user.PasswordHash))
             return Unauthorized("Invalid email or password.");
 

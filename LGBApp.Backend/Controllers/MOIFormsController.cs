@@ -85,7 +85,10 @@ public class MOIFormsController : ControllerBase
                 .Include(j => j.Units)
                 .FirstOrDefaultAsync(j => j.JobRequestId == request.JobId.Value);
             if (job == null) return NotFound();
-            if (AuthHelper.IsExternalUser(User) && !AuthHelper.CanManageClientJob(User, job) && !AuthHelper.IsSignatoryForJob(User, job))
+            if (AuthHelper.IsExternalUser(User)
+                && !AuthHelper.CanManageClientJob(User, job)
+                && !AuthHelper.IsSignatoryForJob(User, job)
+                && !await AuthHelper.CanSignatoryIssueMoiAsync(_context, User, job))
                 return Forbid();
 
             await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
@@ -155,6 +158,9 @@ public class MOIFormsController : ControllerBase
 
         if (!await FormAccessHelper.CanAccessMoiFormAsync(_context, User, form))
             return Forbid();
+
+        var conflict = FormConcurrencyHelper.CheckExpectedUpdatedAt(form.UpdatedAt, request.ExpectedUpdatedAt);
+        if (conflict != null) return conflict;
 
         if (AuthHelper.IsExternalUser(User))
         {
@@ -258,8 +264,26 @@ public class MOIFormsController : ControllerBase
         var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
         if (job == null) return NotFound();
 
-        if (!AuthHelper.CanManageClientJob(User, job) && !AuthHelper.IsSignatoryForJob(User, job))
+        if (!AuthHelper.CanManageClientJob(User, job)
+            && !AuthHelper.IsSignatoryForJob(User, job)
+            && !await AuthHelper.CanSignatoryIssueMoiAsync(_context, User, job))
             return Forbid();
+
+        var formData = JsonHelper.Deserialize<Dictionary<string, object?>>(form.FormDataJson);
+        if (FormDataHelper.IsTruthy(formData.GetValueOrDefault("supportingDocument")))
+        {
+            var docQuery = _context.JobItemDocuments
+                .Where(d => d.JobRequestId == job.JobRequestId
+                    && d.Folder == "supporting");
+            if (form.JobRequestUnitId.HasValue && job.TotalQty > 1)
+                docQuery = docQuery.Where(d => d.JobRequestUnitId == form.JobRequestUnitId);
+            else if (form.JobRequestUnitId.HasValue)
+                docQuery = docQuery.Where(d =>
+                    d.JobRequestUnitId == form.JobRequestUnitId || d.JobRequestUnitId == null);
+
+            if (!await docQuery.AnyAsync())
+                return BadRequest("Attach at least one supporting document before submitting for approval.");
+        }
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest("Customer not found.");
@@ -286,12 +310,7 @@ public class MOIFormsController : ControllerBase
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest("Customer not found.");
 
-        var required = ClientApprovalService.GetRequiredMoiApproverNames(customer);
-        var holder = customer.AccountHolders.FirstOrDefault(h =>
-            h.UserId == user.UserId && h.NeedsMoiApproval)
-            ?? customer.AccountHolders.FirstOrDefault(h =>
-                h.NeedsMoiApproval
-                && h.Name.Equals(user.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+        var holder = ClientApprovalService.FindMoiApprovalHolderForUser(customer, user);
         if (holder == null)
             return Forbid();
 
@@ -343,11 +362,7 @@ public class MOIFormsController : ControllerBase
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest("Customer not found.");
 
-        var holder = customer.AccountHolders.FirstOrDefault(h =>
-            h.UserId == user.UserId && h.NeedsMoiApproval)
-            ?? customer.AccountHolders.FirstOrDefault(h =>
-                h.NeedsMoiApproval
-                && h.Name.Equals(user.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+        var holder = ClientApprovalService.FindMoiApprovalHolderForUser(customer, user);
         if (holder == null)
             return Forbid();
 
@@ -377,7 +392,16 @@ public class MOIFormsController : ControllerBase
         if (customer == null) return BadRequest("Customer not found for company.");
 
         var isAdmin = AuthHelper.IsAdmin(User);
-        if (!await WorkflowService.CanRecommendMoiAsync(_context, user, customer, isAdmin))
+        JobRequest? job = null;
+        if (form.JobRequestId.HasValue)
+        {
+            job = await _context.JobRequests
+                .Include(j => j.Units)
+                .ThenInclude(u => u.Assignees)
+                .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId.Value);
+        }
+
+        if (!await WorkflowService.CanRecommendMoiAsync(_context, user, customer, isAdmin, job))
             return Forbid();
 
         form.RecommendedByUserId = user.UserId;
@@ -444,6 +468,19 @@ public class MOIFormsController : ControllerBase
             return "Draft";
 
         return "PendingRecommendation";
+    }
+
+    [HttpGet("{id}/export-pack")]
+    public async Task<IActionResult> ExportPack(int id)
+    {
+        var form = await _context.MOIForms.FindAsync(id);
+        if (form == null) return NotFound();
+        if (!await FormAccessHelper.CanAccessMoiFormAsync(_context, User, form))
+            return Forbid();
+
+        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
+        var bytes = FormPackExportService.ExportMoiPack(form, customer);
+        return File(bytes, "application/json", $"moi-{id}-pack.json");
     }
 
     private async Task<User?> GetCurrentUserAsync()

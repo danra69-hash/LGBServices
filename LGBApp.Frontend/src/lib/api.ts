@@ -21,6 +21,8 @@ export interface UserResponse {
   mustChangePassword: boolean;
   createdAt: string;
   accessibleCompanies?: SignatoryCompanyAccessDto[];
+  /** Account-holder names linked to this signatory across companies. */
+  signatoryHolderNames?: string[];
 }
 
 export interface SignatoryCompanyAccessDto {
@@ -136,6 +138,7 @@ export interface CustomerResponse {
   loaHolders: string[];
   moiFormTemplateCode?: string;
   moaFormTemplateCode?: string;
+  moaWorkflowTemplateCode?: string;
   moi: string[];
   moiApproval: string[];
   moiApprovalMode?: 'AllRequired' | 'AnyOne';
@@ -178,7 +181,9 @@ export interface JobRequestUnitDto {
   linkedFormId?: number;
   hasMoiForm?: boolean;
   hasMoaForm?: boolean;
+  moiFormId?: number;
   moiWorkflowState?: string;
+  requiredExecutionDate?: string;
   displayStatus?: string;
   displayStatusKey?: string;
   awaitingIntakeApproval?: boolean;
@@ -198,6 +203,17 @@ export interface WorkTrackerItemDto {
   status: string;
   assignedUserId?: number;
   assignedUserName: string;
+  assignees?: UnitAssigneeDto[];
+  internalHandoffStatus?: string;
+  displayStatus?: string;
+  displayStatusKey?: string;
+  linkedFormKind?: string;
+  linkedFormId?: number;
+  hasMoiForm?: boolean;
+  hasMoaForm?: boolean;
+  moiFormId?: number;
+  moiWorkflowState?: string;
+  requiredExecutionDate?: string;
 }
 
 export interface JobRequestResponse {
@@ -343,6 +359,8 @@ export interface ClientApprovalDto {
   accountHolderName: string;
   comments: string;
   signedAt: string;
+  signatureFileName?: string;
+  signatureDataUrl?: string;
 }
 
 export interface FormRejectionDto {
@@ -372,6 +390,7 @@ export interface FormResponse {
   requiredApprovers?: string[];
   pendingApprovers?: string[];
   sharonApprovedAt?: string;
+  submittedForAdminReviewAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -475,6 +494,7 @@ export {
   canManageUsers,
   canAssignJobStaff,
   isAssignableInternalStaff,
+  isInternalSecretaryOnly,
   roleLabel,
 } from '@/lib/roles';
 
@@ -517,6 +537,10 @@ export interface TaskCategoryProgressDto {
 function formatApiError(text: string, status: number): string {
   const trimmed = text.trim();
   if (!trimmed) {
+    if (status === 403) return 'You do not have permission to perform this action.';
+    if (status >= 500) {
+      return 'Cannot reach the API. Start the backend on port 5003 (dotnet run in LGBApp.Backend).';
+    }
     return `Request failed (${status})`;
   }
   if (trimmed.includes('System.') && trimmed.includes(' at ')) {
@@ -612,6 +636,15 @@ export async function changePassword(data: {
 // Users
 export async function getUsers(): Promise<UserResponse[]> {
   return request<UserResponse[]>('/api/users');
+}
+
+export interface AssignableUserDto {
+  userId: number;
+  name: string;
+}
+
+export async function getInternalDirectoryUsers(): Promise<AssignableUserDto[]> {
+  return request<AssignableUserDto[]>('/api/users/internal-directory');
 }
 
 export async function createUser(data: {
@@ -802,7 +835,15 @@ export async function assignJobRequest(
 }
 
 export async function getMyWorkTracker(): Promise<WorkTrackerItemDto[]> {
-  return request<WorkTrackerItemDto[]>('/api/jobrequests/my-tracker');
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20_000);
+  try {
+    return await request<WorkTrackerItemDto[]>('/api/jobrequests/my-tracker', {
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export async function getClientJobs(includeCompleted = false): Promise<JobRequestResponse[]> {
@@ -1026,6 +1067,7 @@ export async function updateMOIForm(id: number, data: {
   formTemplateCode?: string;
   financeRelated?: boolean;
   bankSignatoryMatter?: boolean;
+  expectedUpdatedAt?: string;
   data: Record<string, unknown>;
 }): Promise<void> {
   return request<void>(`/api/moiforms/${id}`, {
@@ -1118,6 +1160,11 @@ export async function getMOAForm(id: number): Promise<FormResponse> {
   return request<FormResponse>(`/api/moaforms/${id}`);
 }
 
+export async function getMOAFormForJob(jobId: number, unitNumber?: number): Promise<FormResponse> {
+  const qs = unitNumber != null ? `?unitNumber=${unitNumber}` : '';
+  return request<FormResponse>(`/api/moaforms/for-job/${jobId}${qs}`);
+}
+
 export async function updateMOAForm(id: number, data: {
   jobId?: number;
   moiFormId?: number;
@@ -1126,6 +1173,7 @@ export async function updateMOAForm(id: number, data: {
   financeRelated?: boolean;
   bankSignatoryMatter?: boolean;
   shareMovement?: boolean;
+  expectedUpdatedAt?: string;
   data: Record<string, unknown>;
 }): Promise<void> {
   return request<void>(`/api/moaforms/${id}`, {
@@ -1139,6 +1187,7 @@ export async function updateMoaPack(id: number, data: {
   financeRelated: boolean;
   bankSignatoryMatter: boolean;
   shareMovement: boolean;
+  expectedUpdatedAt?: string;
 }): Promise<FormResponse> {
   return request<FormResponse>(`/api/moaforms/${id}/pack`, {
     method: 'PUT',
@@ -1147,6 +1196,7 @@ export async function updateMoaPack(id: number, data: {
       financeRelated: data.financeRelated,
       bankSignatoryMatter: data.bankSignatoryMatter,
       shareMovement: data.shareMovement,
+      expectedUpdatedAt: data.expectedUpdatedAt,
     }),
   });
 }
@@ -1191,10 +1241,11 @@ export async function advanceJobHandoff(
   jobId: number,
   action: 'start-prep' | 'start-reso' | 'submit-admin-review' | 'sharon-approve-moa' | 'approve-for-moa' | 'reject-moa',
   comments?: string,
+  unitNumber?: number,
 ): Promise<JobRequestResponse> {
   return request<JobRequestResponse>(`/api/jobrequests/${jobId}/handoff`, {
     method: 'POST',
-    body: JSON.stringify({ action, comments }),
+    body: JSON.stringify({ action, comments, unitNumber }),
   });
 }
 
@@ -1371,4 +1422,53 @@ export async function linkSignatoryByEmail(email: string): Promise<SignatoryLink
     method: 'POST',
     body: JSON.stringify({ email }),
   });
+}
+
+export interface NotificationDto {
+  id: number;
+  eventType: string;
+  title: string;
+  message: string;
+  jobRequestId?: number;
+  customerId?: number;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export async function getNotifications(unreadOnly = false): Promise<NotificationDto[]> {
+  const query = unreadOnly ? '?unreadOnly=true' : '';
+  return request<NotificationDto[]>(`/api/notifications${query}`);
+}
+
+export async function markNotificationRead(id: number): Promise<void> {
+  return request<void>(`/api/notifications/${id}/read`, { method: 'POST' });
+}
+
+async function fetchAuthenticatedBlob(path: string): Promise<Blob> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new ApiError(formatApiError(text, response.status), response.status);
+  }
+  return response.blob();
+}
+
+export async function downloadMoiExportPack(formId: number): Promise<Blob> {
+  return fetchAuthenticatedBlob(`/api/moiforms/${formId}/export-pack`);
+}
+
+export async function downloadMoaExportPack(formId: number): Promise<Blob> {
+  return fetchAuthenticatedBlob(`/api/moaforms/${formId}/export-pack`);
+}
+
+export function saveBlobAsFile(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

@@ -39,6 +39,7 @@ public static class MoiVisibilityHelper
             or JobHandoffStatuses.ReadyForMoa
             or JobHandoffStatuses.MoaCirculation
             or JobHandoffStatuses.PendingExecute
+            or JobHandoffStatuses.ExecutionSecComplete
             or JobHandoffStatuses.Completed;
     }
 }

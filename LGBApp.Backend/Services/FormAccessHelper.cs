@@ -52,7 +52,7 @@ public static class FormAccessHelper
                     .Include(j => j.Units).ThenInclude(u => u.Assignees)
                     .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId);
                 if (job != null)
-                    return TaskFormVisibilityHelper.CanViewMoaForm(user, job);
+                    return TaskFormVisibilityHelper.CanViewMoaForm(user, job, form);
             }
 
             var customer = await WorkflowService.ResolveCustomerForCompanyAsync(context, form.Company);
@@ -68,7 +68,10 @@ public static class FormAccessHelper
                 .Include(j => j.Units).ThenInclude(u => u.Assignees)
                 .FirstOrDefaultAsync(j => j.JobRequestId == form.JobRequestId);
             if (job != null)
-                return TaskFormVisibilityHelper.CanViewMoaForm(user, job);
+            {
+                var moi = await ResolveLinkedMoiAsync(context, form);
+                return TaskFormVisibilityHelper.CanViewMoaForm(user, job, form, moi);
+            }
         }
 
         return AuthHelper.HasMoaOversight(user);
@@ -147,15 +150,16 @@ public static class FormAccessHelper
                 .Select(j => j.JobRequestId)
                 .ToListAsync();
 
-            var moiJobIds = await context.JobRequests
-                .Where(j => j.CustomerId == customerId && j.TaskType == "MOI")
+            var approvalJobIds = await context.JobRequests
+                .Where(j => j.CustomerId == customerId
+                    && (j.TaskType == "MOI" || j.TaskType == "Service"))
                 .Select(j => j.JobRequestId)
                 .ToListAsync();
 
             var approvalFormIds = await context.MOIForms
                 .Where(f => f.WorkflowState == MoiWorkflowStates.PendingClientMoiApproval
                     && f.JobRequestId != null
-                    && moiJobIds.Contains(f.JobRequestId.Value))
+                    && approvalJobIds.Contains(f.JobRequestId.Value))
                 .Select(f => f.MOIFormId)
                 .ToListAsync();
 
@@ -228,6 +232,23 @@ public static class FormAccessHelper
 
         var required = ClientApprovalService.GetRequiredMoiApproverNames(customer);
         return required.Any(n => n.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<MOIForm?> ResolveLinkedMoiAsync(AppDbContext context, MOAForm form)
+    {
+        if (form.MOIFormId.HasValue)
+            return await context.MOIForms.FindAsync(form.MOIFormId.Value);
+
+        if (!form.JobRequestId.HasValue)
+            return null;
+
+        return await context.MOIForms
+            .Where(f => f.JobRequestId == form.JobRequestId
+                && (form.JobRequestUnitId == null
+                    ? f.JobRequestUnitId == null
+                    : f.JobRequestUnitId == form.JobRequestUnitId))
+            .OrderByDescending(f => f.UpdatedAt)
+            .FirstOrDefaultAsync();
     }
 
     private static async Task<List<int>> GetAssignedInternalJobIdsAsync(AppDbContext context, int userId) =>

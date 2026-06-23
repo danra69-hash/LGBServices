@@ -10,7 +10,7 @@ stateDiagram-v2
   MoiApproved --> MoaPrepInternal: Assign secretarial team
   MoaPrepInternal --> ReadyForMoa: Admin approve for MOA
   ReadyForMoa --> MoaCirculation: Start MOA workflow
-  MoaCirculation --> Completed: Workflow + client sign-off
+  MoaCirculation --> Completed: Client + LGB sign-off
   Completed --> [*]
 
   note right of AwaitingIntake
@@ -29,6 +29,6 @@ stateDiagram-v2
   end note
 
   note right of MoaCirculation
-    Role: IsInternalSignatory
-    + CanApproveMoa oversight
+    Client signatories + internal
+    IsInternalSignatory / CanApproveMoa
   end note

@@ -163,6 +163,12 @@ public static class JobWorkflowIntegrityService
     {
         if (string.IsNullOrWhiteSpace(unit.InternalHandoffStatus)
             && !string.IsNullOrWhiteSpace(job.InternalHandoffStatus)
+            && job.InternalHandoffStatus is not (
+                JobHandoffStatuses.Completed
+                or JobHandoffStatuses.PendingExecute
+                or JobHandoffStatuses.ExecutionSecComplete
+                or JobHandoffStatuses.MoaCirculation
+                or JobHandoffStatuses.ReadyForMoa)
             && moi.WorkflowState is MoiWorkflowStates.PendingAdminIntake
                 or MoiWorkflowStates.PendingPrep
                 or MoiWorkflowStates.PendingRecommendation
@@ -177,9 +183,7 @@ public static class JobWorkflowIntegrityService
         if (units.Count <= 1)
             return;
 
-        // Multi-session jobs use per-unit handoff; job-level status misleads session 2 when session 1 advances.
-        if (units.Any(u => !string.IsNullOrWhiteSpace(u.InternalHandoffStatus)))
-            job.InternalHandoffStatus = string.Empty;
+        JobHandoffResolver.SyncJobHandoffFromUnits(job);
     }
 
     private static bool IsDisposableDraft(MOIForm form) =>

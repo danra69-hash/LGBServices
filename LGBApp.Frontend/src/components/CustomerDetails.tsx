@@ -1,4 +1,4 @@
-import { Mail, Phone, Building2, Calendar, DollarSign, MessageSquare, X, Package, Users, Edit, Trash2 } from 'lucide-react';
+import { Mail, Phone, Building2, DollarSign, X, Package, Users, Edit, Trash2 } from 'lucide-react';
 import {
   type CustomerPackageDto,
   type CustomerResponse,
@@ -12,14 +12,6 @@ import {
 
 type Customer = CustomerResponse;
 
-interface Activity {
-  id: number;
-  type: 'call' | 'email' | 'meeting' | 'note';
-  title: string;
-  date: string;
-  description: string;
-}
-
 interface CustomerDetailsProps {
   customer: Customer | null;
   products?: ProductResponse[];
@@ -30,25 +22,8 @@ interface CustomerDetailsProps {
   onOpenPackageWork?: (customer: Customer, pkg: CustomerPackageDto) => void;
 }
 
-const mockActivities: Activity[] = [
-  { id: 1, type: 'call', title: 'Follow-up call', date: '2026-05-10', description: 'Discussed Q2 requirements' },
-  { id: 2, type: 'email', title: 'Proposal sent', date: '2026-05-08', description: 'Sent pricing proposal for new project' },
-  { id: 3, type: 'meeting', title: 'Discovery meeting', date: '2026-05-05', description: 'Initial consultation and needs assessment' },
-  { id: 4, type: 'note', title: 'Budget approved', date: '2026-05-03', description: 'Customer confirmed budget for implementation' },
-];
-
 export function CustomerDetails({ customer, products = [], onClose, onEdit, onDelete, onOpenTracking, onOpenPackageWork }: CustomerDetailsProps) {
   if (!customer) return null;
-
-  const getActivityIcon = (type: string) => {
-    switch (type) {
-      case 'call': return <Phone className="w-4 h-4" />;
-      case 'email': return <Mail className="w-4 h-4" />;
-      case 'meeting': return <Calendar className="w-4 h-4" />;
-      case 'note': return <MessageSquare className="w-4 h-4" />;
-      default: return <MessageSquare className="w-4 h-4" />;
-    }
-  };
 
   return (
     <div className="bg-card rounded-lg border border-border overflow-hidden">
@@ -355,26 +330,6 @@ export function CustomerDetails({ customer, products = [], onClose, onEdit, onDe
               <span className="text-muted-foreground">MOA (Memorandum of Association)</span>
               <span className="font-medium">{(customer.moa || []).join(', ') || 'None'}</span>
             </div>
-          </div>
-        </div>
-
-        <div className="border-t border-border pt-6">
-          <h3 className="mb-4">Recent Activity</h3>
-          <div className="space-y-4">
-            {mockActivities.map((activity) => (
-              <div key={activity.id} className="flex gap-3">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
-                  {getActivityIcon(activity.type)}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium">{activity.title}</span>
-                    <span className="text-sm text-muted-foreground">{activity.date}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{activity.description}</p>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       </div>

@@ -92,6 +92,7 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "Customers", "LoaHoldersJson", "TEXT NOT NULL DEFAULT '[]'");
         EnsureColumn(context, "Customers", "MoiFormTemplateCode", "TEXT NULL");
         EnsureColumn(context, "Customers", "MoaFormTemplateCode", "TEXT NULL");
+        EnsureColumn(context, "Customers", "MoaWorkflowTemplateCode", "TEXT NULL");
 
         EnsureColumn(context, "Users", "JobTitle", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(context, "Users", "CanRecommendMoi", "INTEGER NOT NULL DEFAULT 0");
@@ -165,6 +166,7 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "MOAForms", "ClientApprovalsJson", "TEXT NOT NULL DEFAULT '[]'");
         EnsureColumn(context, "MOAForms", "RejectionsJson", "TEXT NOT NULL DEFAULT '[]'");
         EnsureColumn(context, "MOAForms", "SharonApprovedAt", "TEXT NULL");
+        EnsureColumn(context, "MOAForms", "SubmittedForAdminReviewAt", "TEXT NULL");
         EnsureColumn(context, "MOAForms", "JobRequestId", "INTEGER NULL");
 
         context.Database.ExecuteSqlRaw("""
@@ -348,6 +350,42 @@ public static class SqliteSchemaMigrator
         context.Database.ExecuteSqlRaw("""
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_SignatoryCustomerAccess_UserId_CustomerId"
             ON "SignatoryCustomerAccess" ("UserId", "CustomerId");
+            """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "AppNotifications" (
+                "AppNotificationId" INTEGER NOT NULL CONSTRAINT "PK_AppNotifications" PRIMARY KEY AUTOINCREMENT,
+                "UserId" INTEGER NOT NULL,
+                "EventType" TEXT NOT NULL DEFAULT '',
+                "Title" TEXT NOT NULL DEFAULT '',
+                "Message" TEXT NOT NULL DEFAULT '',
+                "JobRequestId" INTEGER NULL,
+                "CustomerId" INTEGER NULL,
+                "IsRead" INTEGER NOT NULL DEFAULT 0,
+                "CreatedAt" TEXT NOT NULL,
+                CONSTRAINT "FK_AppNotifications_Users_UserId" FOREIGN KEY ("UserId") REFERENCES "Users" ("UserId") ON DELETE CASCADE
+            );
+            """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "Invoices" (
+                "InvoiceId" INTEGER NOT NULL CONSTRAINT "PK_Invoices" PRIMARY KEY AUTOINCREMENT,
+                "CustomerId" INTEGER NOT NULL,
+                "JobRequestId" INTEGER NULL,
+                "InvoiceNumber" TEXT NOT NULL DEFAULT '',
+                "Amount" REAL NOT NULL DEFAULT 0,
+                "Currency" TEXT NOT NULL DEFAULT 'MYR',
+                "Status" TEXT NOT NULL DEFAULT 'Draft',
+                "Notes" TEXT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                "IssuedAt" TEXT NULL,
+                CONSTRAINT "FK_Invoices_Customers_CustomerId" FOREIGN KEY ("CustomerId") REFERENCES "Customers" ("CustomerId") ON DELETE CASCADE
+            );
+            """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_Invoices_InvoiceNumber"
+            ON "Invoices" ("InvoiceNumber");
             """);
     }
 

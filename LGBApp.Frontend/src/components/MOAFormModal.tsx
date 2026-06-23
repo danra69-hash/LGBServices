@@ -1,18 +1,37 @@
-import { Upload, X } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Send, X, FileText } from 'lucide-react';
+import { SignatureCapture, type SignaturePayload } from './SignatureCapture';
+import { ClientSignOffTrail } from './ClientSignOffTrail';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { DateInput } from './DateInput';
+import { JobItemDocumentsSection } from './JobItemDocumentsSection';
 import {
   adminOverrideMoaStep,
   approveMoaWorkflowStep,
+  getInternalDirectoryUsers,
   resolveFormTemplate,
+  type ClientApprovalDto,
   type FormTemplateDto,
   type MoaPackChecklistDto,
   type WorkflowInstanceDto,
 } from '@/lib/api';
+import {
+  emptyMoaFormFields,
+  hydrateMoaFormFields,
+  SHOW_MOA_SEQUENTIAL_WORKFLOW,
+  type MoaFormFields,
+} from '@/lib/moaFormState';
+import { resolveMoaTemplateSections } from '@/lib/moaTemplateSections';
+import { isMoaClientSignoffHandoff } from '@/lib/packageItemStatus';
+import { formatPendingApproverList, signatoryHasPendingApproval, signatoryMatchesApproverName } from '@/lib/signatoryApprovers';
+import { hydrateMoiFormFields } from '@/lib/moiFormState';
+import { formatDateDisplay } from '@/lib/dates';
 
 interface Customer {
   id: number;
   company: string;
   package: string;
+  hasLoa?: boolean;
+  moaWorkflowTemplateCode?: string;
   accountHolders: { id: number; name: string; moi: boolean; moiApproval: boolean; moa: boolean }[];
 }
 
@@ -33,16 +52,25 @@ const emptyPackChecklist = (): MoaPackChecklistDto => ({
   ssmAsAtDate: '',
 });
 
+const MOI_SOURCE_DOC_FOLDERS = ['supporting', 'moi'] as const;
+const MOA_ATTACHMENT_FOLDERS = ['moa', 'supporting'] as const;
+
 interface MOAFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: any) => void;
-  onStartWorkflow?: (moaFormId: number) => void;
+  onSubmit: (data: any) => Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string } | void>;
+  onSaveDraft?: (data: Record<string, unknown>) => Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string }>;
+  onDirtyChange?: (dirty: boolean) => void;
+  onStartWorkflow?: (payload: Record<string, unknown>) => void | Promise<void>;
   onClientApprove?: (moaFormId: number, payload: { comments: string; signatureFileName?: string; signatureDataUrl?: string }) => void;
   onClientReject?: (moaFormId: number, reason: string) => void;
   onSharonApprove?: (jobId: number) => void;
   onSharonReject?: (jobId: number, reason: string) => void;
   onSendToClient?: (jobId: number) => void;
+  onSubmitForAdminReview?: (jobId: number) => void | Promise<void>;
+  canSubmitForAdminReview?: boolean;
+  canMarkExecutionComplete?: boolean;
+  onMarkExecutionComplete?: (jobId: number) => void | Promise<void>;
   jobHandoffStatus?: string;
   viewMode?: boolean;
   initialData?: any;
@@ -52,18 +80,33 @@ interface MOAFormModalProps {
   userIsAdmin?: boolean;
   canApproveMoa?: boolean;
   isClientUser?: boolean;
+  needsMoa?: boolean;
+  isInternalSignatory?: boolean;
+  currentUserName?: string;
+  signatoryHolderNames?: string[];
+  linkedMoiData?: Record<string, unknown> | null;
+  jobId?: number;
+  unitNumber?: number;
+  allowMoaAttachments?: boolean;
+  onViewLinkedMoi?: () => void;
 }
 
 export function MOAFormModal({
   isOpen,
   onClose,
   onSubmit,
+  onSaveDraft,
+  onDirtyChange,
   onStartWorkflow,
   onClientApprove,
   onClientReject,
   onSharonApprove,
   onSharonReject,
   onSendToClient,
+  onSubmitForAdminReview,
+  canSubmitForAdminReview = false,
+  canMarkExecutionComplete = false,
+  onMarkExecutionComplete,
   jobHandoffStatus = '',
   viewMode = false,
   initialData,
@@ -73,117 +116,211 @@ export function MOAFormModal({
   userIsAdmin = false,
   canApproveMoa = false,
   isClientUser = false,
+  needsMoa = false,
+  isInternalSignatory = false,
+  currentUserName = '',
+  signatoryHolderNames = [],
+  linkedMoiData,
+  jobId,
+  unitNumber,
+  allowMoaAttachments = false,
+  onViewLinkedMoi,
 }: MOAFormModalProps) {
   const [formTemplate, setFormTemplate] = useState<FormTemplateDto | null>(null);
   const [workflow, setWorkflow] = useState<WorkflowInstanceDto | null>(null);
+  const sequentialWorkflowUi = SHOW_MOA_SEQUENTIAL_WORKFLOW && Boolean(workflow);
+  const pendingApprovers: string[] = initialData?.pendingApprovers ?? [];
+  const requiredApprovers: string[] = initialData?.requiredApprovers ?? [];
+  const clientApprovals: ClientApprovalDto[] = initialData?.clientApprovals ?? [];
+  const nameMatches = (n: string) => signatoryMatchesApproverName(n, currentUserName, signatoryHolderNames);
+  const alreadySignedMoa = clientApprovals.some((a) => a.accountHolderName && nameMatches(a.accountHolderName));
+  const isMoaSignoffPhase = isMoaClientSignoffHandoff(jobHandoffStatus);
+  const canSignMoa = Boolean(
+    initialData?.id
+    && currentUserName
+    && viewMode
+    && isMoaSignoffPhase
+    && !alreadySignedMoa
+    && (
+      (isClientUser && needsMoa && (
+        signatoryHasPendingApproval(pendingApprovers, currentUserName, signatoryHolderNames)
+        || requiredApprovers.some(nameMatches)
+        || (requiredApprovers.length === 0 && pendingApprovers.length === 0)
+      ))
+      || (!isClientUser && (isInternalSignatory || canApproveMoa))
+    ),
+  );
   const [packChecklist, setPackChecklist] = useState<MoaPackChecklistDto>(emptyPackChecklist);
   const [packErrors, setPackErrors] = useState<string[]>([]);
+  const [submitError, setSubmitError] = useState('');
+  const packErrorsRef = useRef<HTMLDivElement | null>(null);
   const [stepComments, setStepComments] = useState('');
   const [clientSignComments, setClientSignComments] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [sharonRejectReason, setSharonRejectReason] = useState('');
-  const [signatureFile, setSignatureFile] = useState<File | null>(null);
+  const [signature, setSignature] = useState<SignaturePayload | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [formData, setFormData] = useState({
-    company: '',
-    typeOfDocument: '',
-    projectInitiator: '',
-    preparedByInternal: '',
-    vettedByInternal: '',
-    preparedByExternal: '',
-    vettedByExternal: '',
-    seniorManagerApproval: {
-      approved: false,
-      date: '',
-      comments: '',
-      resoForDLCM: false
-    },
-    managerRegulatoryApproval: {
-      approved: false,
-      date: '',
-      comments: ''
-    },
-    moaPersonsApprovals: [] as { name: string; approved: boolean; date: string; comments: string }[],
-    financeRelated: false,
-    bankSignatoryMatter: false,
-    shareMovement: false,
-    formTemplateCode: '',
-    moiFormId: undefined as number | undefined,
-  });
-
-  const emptyFormData = {
-    company: '',
-    typeOfDocument: '',
-    projectInitiator: '',
-    preparedByInternal: '',
-    vettedByInternal: '',
-    preparedByExternal: '',
-    vettedByExternal: '',
-    seniorManagerApproval: {
-      approved: false,
-      date: '',
-      comments: '',
-      resoForDLCM: false,
-    },
-    managerRegulatoryApproval: {
-      approved: false,
-      date: '',
-      comments: '',
-    },
-    moaPersonsApprovals: [] as { name: string; approved: boolean; date: string; comments: string }[],
-  };
+  const [documentsRefreshKey, setDocumentsRefreshKey] = useState(0);
+  const [exportingPack, setExportingPack] = useState(false);
+  const [exportPackError, setExportPackError] = useState('');
+  const [autoSaveState, setAutoSaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle');
+  const [formData, setFormData] = useState<MoaFormFields>(emptyMoaFormFields());
+  const selectedCustomer = customers.find((c) => c.company === formData.company);
+  const templateSections = useMemo(
+    () => resolveMoaTemplateSections(selectedCustomer?.moaWorkflowTemplateCode, {
+      financeRelated: formData.financeRelated,
+      bankSignatoryMatter: formData.bankSignatoryMatter,
+      shareMovement: formData.shareMovement,
+      hasLoa: selectedCustomer?.hasLoa,
+    }),
+    [
+      selectedCustomer?.moaWorkflowTemplateCode,
+      selectedCustomer?.hasLoa,
+      formData.financeRelated,
+      formData.bankSignatoryMatter,
+      formData.shareMovement,
+      formData.company,
+    ],
+  );
+  const [pickerUsers, setPickerUsers] = useState<User[]>(users);
+  const hydratingRef = useRef(true);
+  const autoSaveTimerRef = useRef<number | null>(null);
+  const autoSaveInFlightRef = useRef<Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string }> | null>(null);
+  const hydrateSessionKeyRef = useRef('');
+  const savedUpdatedAtRef = useRef<string | undefined>(undefined);
+  const moaFormIdRef = useRef<number | undefined>(undefined);
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  const customersRef = useRef(customers);
+  onDirtyChangeRef.current = onDirtyChange;
+  customersRef.current = customers;
 
   useEffect(() => {
-    if (!isOpen) return;
-    if (moiData) {
-      const selectedCompany = customers?.find(c => c.company === moiData.company);
-      const moaPersons = selectedCompany?.accountHolders?.filter(h => h.moa) || [];
+    setPickerUsers(users);
+  }, [users]);
 
-      setFormData({
-        company: moiData.company || '',
-        typeOfDocument: moiData.typeOfDocument || '',
-        projectInitiator: moiData.requestedBy || '',
-        preparedByInternal: '',
-        vettedByInternal: '',
-        preparedByExternal: '',
-        vettedByExternal: '',
-        seniorManagerApproval: {
-          approved: false,
-          date: '',
-          comments: '',
-          resoForDLCM: false
-        },
-        managerRegulatoryApproval: {
-          approved: false,
-          date: '',
-          comments: ''
-        },
-        moaPersonsApprovals: moaPersons.map(person => ({
-          name: person.name,
-          approved: false,
-          date: '',
-          comments: ''
-        })),
-        financeRelated: Boolean(moiData.financeRelated),
-        bankSignatoryMatter: Boolean(moiData.bankSignatoryMatter),
-        shareMovement: false,
-        formTemplateCode: String(moiData.formTemplateCode ?? ''),
-        moiFormId: moiData.id as number | undefined,
-      });
-      if (moiData.workflow) setWorkflow(moiData.workflow as WorkflowInstanceDto);
+  useEffect(() => {
+    if (!isOpen || viewMode || isClientUser || pickerUsers.length > 0) return;
+    void getInternalDirectoryUsers()
+      .then((data) => setPickerUsers(data.map((u) => ({ id: u.userId, name: u.name }))))
+      .catch(() => undefined);
+  }, [isOpen, viewMode, isClientUser, pickerUsers.length]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      hydrateSessionKeyRef.current = '';
+      moaFormIdRef.current = undefined;
       return;
     }
-    if (!viewMode) {
-      setFormData(emptyFormData);
-    }
-  }, [isOpen, moiData, customers, viewMode]);
 
-  // Populate form with initialData when in view mode
-  useEffect(() => {
-    if (viewMode && initialData) {
-      setFormData(initialData);
+    const source = initialData ?? moiData;
+    const sessionKey = [
+      source?.jobId ?? 'job',
+      source?.unitNumber ?? source?.activeUnitNumber ?? 'unit',
+    ].join(':');
+
+    const nextUpdatedAt = source?.updatedAt as string | undefined;
+    const nextFormId = (source?.id ?? moiData?.id) as number | undefined;
+    if (nextFormId) moaFormIdRef.current = nextFormId;
+
+    if (sessionKey === hydrateSessionKeyRef.current) {
+      if (nextUpdatedAt) savedUpdatedAtRef.current = nextUpdatedAt;
+      return;
     }
-  }, [viewMode, initialData]);
+    hydrateSessionKeyRef.current = sessionKey;
+    if (nextUpdatedAt) savedUpdatedAtRef.current = nextUpdatedAt;
+
+    hydratingRef.current = true;
+    onDirtyChangeRef.current?.(false);
+
+    const isNewFromMoi = Boolean(
+      moiData
+      && !source?.packChecklist
+      && !source?.submittedForAdminReviewAt
+      && (source?.requestedBy || source?.typeOfDocument)
+      && (source?.moiFormId == null || source?.moiFormId === source?.id),
+    );
+
+    setFormData(hydrateMoaFormFields(source, {
+      customers: customersRef.current,
+      serviceFallback: String(source?.service ?? ''),
+      isNewFromMoi,
+    }));
+
+    if (source?.workflow) setWorkflow(source.workflow as WorkflowInstanceDto);
+    else setWorkflow(null);
+
+    if (source?.packChecklist) setPackChecklist(source.packChecklist as MoaPackChecklistDto);
+    else setPackChecklist(emptyPackChecklist());
+
+    if (source?.packValidationErrors) setPackErrors(source.packValidationErrors as string[]);
+    else setPackErrors([]);
+
+    setAutoSaveState('idle');
+    window.setTimeout(() => {
+      hydratingRef.current = false;
+    }, 0);
+  }, [
+    isOpen,
+    initialData?.id,
+    initialData?.jobId,
+    initialData?.unitNumber,
+    initialData?.activeUnitNumber,
+    moiData?.id,
+    moiData?.jobId,
+    moiData?.unitNumber,
+    moiData?.activeUnitNumber,
+  ]);
+
+  const moaFormId = moaFormIdRef.current ?? (initialData?.id ?? moiData?.id) as number | undefined;
+
+  useEffect(() => {
+    if (!isOpen || hydratingRef.current || viewMode || isClientUser || sequentialWorkflowUi) return;
+    onDirtyChangeRef.current?.(true);
+    setAutoSaveState((prev) => (prev === 'error' ? prev : 'pending'));
+  }, [formData, packChecklist, isOpen, viewMode, isClientUser, sequentialWorkflowUi]);
+
+  const buildSubmitPayload = () => ({
+    ...formData,
+    id: moaFormIdRef.current ?? (initialData?.id ?? moiData?.id),
+    jobId: initialData?.jobId ?? moiData?.jobId,
+    unitNumber: initialData?.unitNumber ?? initialData?.activeUnitNumber ?? moiData?.unitNumber,
+    activeUnitNumber: initialData?.activeUnitNumber ?? moiData?.activeUnitNumber,
+    updatedAt: savedUpdatedAtRef.current ?? initialData?.updatedAt ?? moiData?.updatedAt,
+    packChecklist,
+  });
+
+  useEffect(() => {
+    if (!isOpen || viewMode || isClientUser || sequentialWorkflowUi || !onSaveDraft) return;
+    if (hydratingRef.current || autoSaveState !== 'pending') return;
+
+    if (autoSaveTimerRef.current != null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+    }
+
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      const savePromise = onSaveDraft(buildSubmitPayload());
+      autoSaveInFlightRef.current = savePromise;
+      void savePromise
+        .then((result) => {
+          if (result.id) moaFormIdRef.current = result.id;
+          if (result.updatedAt) savedUpdatedAtRef.current = result.updatedAt;
+          onDirtyChangeRef.current?.(false);
+          setAutoSaveState('idle');
+        })
+        .catch(() => setAutoSaveState('error'))
+        .finally(() => {
+          if (autoSaveInFlightRef.current === savePromise) {
+            autoSaveInFlightRef.current = null;
+          }
+        });
+    }, 900);
+
+    return () => {
+      if (autoSaveTimerRef.current != null) {
+        window.clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [isOpen, viewMode, isClientUser, sequentialWorkflowUi, onSaveDraft, formData, packChecklist, autoSaveState]);
 
   const selectedCompany = customers?.find(c => c.company === formData.company);
 
@@ -194,28 +331,110 @@ export function MOAFormModal({
       .catch(() => setFormTemplate(null));
   }, [isOpen, formData.company, formData.formTemplateCode]);
 
-  useEffect(() => {
-    if (initialData?.workflow) setWorkflow(initialData.workflow);
-    if (initialData?.packChecklist) setPackChecklist(initialData.packChecklist as MoaPackChecklistDto);
-    if (initialData?.packValidationErrors) setPackErrors(initialData.packValidationErrors as string[]);
-  }, [initialData]);
+  const validatePackChecklist = (): string[] => {
+    const errors: string[] = [];
+    if (!packChecklist.internalChecklistA) errors.push('Internal checklist A must be completed.');
+    if (!packChecklist.internalChecklistB) errors.push('Internal checklist B must be completed.');
+    if (!packChecklist.cleanAgreementAttached) errors.push('Clean agreement / appointment letter attachment is required.');
+    if (!packChecklist.ssmRegistrationNo.trim()) errors.push('SSM registration number is required.');
+    if (!packChecklist.ssmEntityType.trim()) errors.push('SSM entity type is required.');
+    if (!packChecklist.ssmStatus.trim()) errors.push('SSM status is required.');
+    if (!packChecklist.ssmAsAtDate.trim()) errors.push('SSM as-at date is required.');
+    if (formData.shareMovement && !packChecklist.shareholdingTableAttached) {
+      errors.push('Shareholding table is required when share movement is flagged.');
+    }
+    return errors;
+  };
+
+  const cancelPendingAutoSave = () => {
+    if (autoSaveTimerRef.current != null) {
+      window.clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+  };
+
+  const applySaveResult = (result?: { id: number; updatedAt?: string } | null) => {
+    if (result?.id) moaFormIdRef.current = result.id;
+    if (result?.updatedAt) savedUpdatedAtRef.current = result.updatedAt;
+    onDirtyChangeRef.current?.(false);
+    setAutoSaveState('idle');
+  };
+
+  const persistDraft = async (): Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string } | null> => {
+    cancelPendingAutoSave();
+    if (autoSaveInFlightRef.current) {
+      try {
+        await autoSaveInFlightRef.current;
+      } catch {
+        // Fall through and retry with the latest editor state.
+      }
+    }
+
+    const payload = buildSubmitPayload();
+    try {
+      const result = onSaveDraft
+        ? await onSaveDraft(payload)
+        : await onSubmit(payload);
+      if (!result) return null;
+      applySaveResult(result);
+      return result;
+    } catch {
+      setAutoSaveState('error');
+      return null;
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await onSubmit({
-        ...formData,
-        id: moaFormId,
-        jobId: initialData?.jobId ?? moiData?.jobId,
-        packChecklist,
-      });
+      cancelPendingAutoSave();
+      if (autoSaveInFlightRef.current) {
+        try {
+          await autoSaveInFlightRef.current;
+        } catch {
+          // Retry with the latest editor state below.
+        }
+      }
+
+      const result = await onSubmit(buildSubmitPayload());
+      if (result) {
+        applySaveResult(result);
+        setAutoSaveState('saved');
+      }
+    } catch {
+      setAutoSaveState('error');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const moaFormId = (initialData?.id ?? moiData?.id) as number | undefined;
+  const handleSubmitForAdminReview = async () => {
+    setSubmitError('');
+    const errors = validatePackChecklist();
+    setPackErrors(errors);
+    if (errors.length > 0) {
+      packErrorsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+
+    const jobId = initialData?.jobId ?? moiData?.jobId;
+    if (!jobId || !onSubmitForAdminReview) return;
+
+    setSubmitting(true);
+    try {
+      const saved = await persistDraft();
+      if (!saved) {
+        setSubmitError('Could not save the latest draft. Please try Save draft first, then submit again.');
+        return;
+      }
+      await onSubmitForAdminReview(jobId);
+    } catch {
+      setSubmitError('Failed to submit MOA for admin approval. Complete the pack checklist and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleApproveStep = async () => {
     if (!workflow || !moaFormId) return;
@@ -233,27 +452,10 @@ export function MOAFormModal({
   const currentStep = workflow?.steps.find((s) => s.isCurrent);
 
   const handleClose = () => {
-    setFormData({
-      company: '',
-      typeOfDocument: '',
-      projectInitiator: '',
-      preparedByInternal: '',
-      vettedByInternal: '',
-      preparedByExternal: '',
-      vettedByExternal: '',
-      seniorManagerApproval: {
-        approved: false,
-        date: '',
-        comments: '',
-        resoForDLCM: false
-      },
-      managerRegulatoryApproval: {
-        approved: false,
-        date: '',
-        comments: ''
-      },
-      moaPersonsApprovals: []
-    });
+    setFormData(emptyMoaFormFields());
+    setPackChecklist(emptyPackChecklist());
+    setPackErrors([]);
+    setWorkflow(null);
     onClose();
   };
 
@@ -263,19 +465,125 @@ export function MOAFormModal({
     setFormData({ ...formData, moaPersonsApprovals: newApprovals });
   };
 
+  const rejectionStageLabel = (stage?: string) => {
+    if (stage === 'moa_sharon_review') return 'Head secretary review';
+    if (stage === 'moa_client_approval') return 'Client sign-off';
+    return 'Review';
+  };
+
+
+  const handleDownloadPack = async () => {
+    const formId = (initialData?.id ?? moiData?.id) as number | undefined;
+    if (!formId) return;
+    setExportingPack(true);
+    setExportPackError('');
+    try {
+      const blob = await downloadMoaExportPack(formId);
+      saveBlobAsFile(blob, `moa-${formId}-pack.json`);
+    } catch (err) {
+      setExportPackError(err instanceof ApiError ? err.message : 'Failed to download pack.');
+    } finally {
+      setExportingPack(false);
+    }
+  };
+
   if (!isOpen) return null;
+
+  const moiFields = linkedMoiData ? hydrateMoiFormFields(linkedMoiData) : null;
+  const resolvedJobId = jobId ?? (linkedMoiData?.jobId as number | undefined) ?? (initialData?.jobId as number | undefined);
+  const resolvedUnitNumber = unitNumber
+    ?? (linkedMoiData?.unitNumber as number | undefined)
+    ?? (linkedMoiData?.activeUnitNumber as number | undefined);
+  const canManageMoaAttachments = !isClientUser && (allowMoaAttachments || !viewMode);
+
+  const ensureJobForDocuments = async () => {
+    if (resolvedJobId) {
+      return { jobId: Number(resolvedJobId), unitNumber: resolvedUnitNumber };
+    }
+    if (!onSaveDraft) {
+      throw new Error('Save the MOA draft first so attachments can be stored.');
+    }
+    return onSaveDraft(buildSubmitPayload());
+  };
+
+  const moaAttachmentsSection = (resolvedJobId || onSaveDraft) ? (
+    <div className="border border-primary/25 rounded-lg p-4 bg-primary/5 space-y-2">
+      <p className="text-xs text-muted-foreground">
+        {canManageMoaAttachments
+          ? 'Upload the MOA pack and any supporting documents below (multiple files per section).'
+          : 'Review MOA pack and supporting documents attached for this item.'}
+      </p>
+      <JobItemDocumentsSection
+        jobId={Number(resolvedJobId) || 0}
+        unitNumber={resolvedUnitNumber}
+        refreshKey={documentsRefreshKey}
+        folders={[...MOA_ATTACHMENT_FOLDERS]}
+        groupByFolder
+        title="MOA attachments"
+        showWhenEmpty
+        allowUpload={canManageMoaAttachments}
+        allowDelete={canManageMoaAttachments}
+        uploadFolder="moa"
+        onBeforeUpload={async () => {
+          const resolved = await ensureJobForDocuments();
+          setDocumentsRefreshKey((k) => k + 1);
+          return resolved;
+        }}
+      />
+    </div>
+  ) : null;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-card rounded-lg border border-border w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="p-6 border-b border-border flex items-center justify-between">
-          <h2>Memorandum of Approval (MOA) {viewMode && '- View Mode'}</h2>
-          <button
-            onClick={handleClose}
-            className="p-1 hover:bg-muted rounded transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+        <div className="p-6 border-b border-border flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h2>Memorandum of Approval (MOA) {viewMode && '- View Mode'}</h2>
+            {linkedMoiData && onViewLinkedMoi && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Need the client MOI? Use <span className="font-medium text-primary">View MOI</span> — your MOA draft stays open underneath.
+              </p>
+            )}
+            {!viewMode && !isClientUser && !sequentialWorkflowUi && onSaveDraft && autoSaveState === 'error' && (
+              <p className="text-xs mt-1 h-4 text-destructive" aria-live="polite">
+                Auto-save failed — use Save draft
+              </p>
+            )}
+            {exportPackError && (
+              <p className="text-xs text-destructive mt-1">{exportPackError}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {(initialData?.id ?? moiData?.id) && (
+              <button
+                type="button"
+                onClick={() => void handleDownloadPack()}
+                disabled={exportingPack}
+                title="Structured JSON export (PDF packs coming later)"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                {exportingPack ? 'Downloading…' : 'Download pack'}
+              </button>
+            )}
+            {linkedMoiData && onViewLinkedMoi && (
+              <button
+                type="button"
+                onClick={onViewLinkedMoi}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-primary/30 bg-primary/10 text-primary rounded-lg hover:bg-primary/15 transition-colors"
+              >
+                <FileText className="w-4 h-4" />
+                View MOI
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleClose}
+              className="p-1 hover:bg-muted rounded transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
@@ -294,13 +602,70 @@ export function MOAFormModal({
                 <span className="text-sm text-muted-foreground">Division:</span>
                 <span className="font-medium">{formTemplate?.divisionLabel || 'Secretarial Division'}</span>
               </div>
-              {workflow && (
+              {sequentialWorkflowUi && workflow && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Workflow:</span>
                   <span className="text-sm font-medium">{workflow.templateCode} — {workflow.status}</span>
                 </div>
               )}
             </div>
+
+            {moaAttachmentsSection}
+
+            {linkedMoiData && moiFields && (
+              <div className="border border-primary/20 rounded-lg p-4 bg-primary/5 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <FileText className="w-4 h-4 text-primary" />
+                    Source MOI (read-only)
+                  </div>
+                  {onViewLinkedMoi && (
+                    <button
+                      type="button"
+                      onClick={onViewLinkedMoi}
+                      className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted"
+                    >
+                      Open full MOI
+                    </button>
+                  )}
+                </div>
+                {moiFields.documentTitle && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Document title</p>
+                    <p className="text-sm">{String(moiFields.documentTitle)}</p>
+                  </div>
+                )}
+                {moiFields.backgroundInfo && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Background</p>
+                    <p className="text-sm whitespace-pre-wrap">{String(moiFields.backgroundInfo)}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  {moiFields.requiredExecutionDate && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Required MOA signatories</p>
+                      <p>{formatDateDisplay(String(moiFields.requiredExecutionDate)) || String(moiFields.requiredExecutionDate)}</p>
+                    </div>
+                  )}
+                  {moiFields.turnaroundWeeks && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Turnaround</p>
+                      <p>{String(moiFields.turnaroundWeeks)} week(s)</p>
+                    </div>
+                  )}
+                </div>
+                {resolvedJobId && (
+                  <JobItemDocumentsSection
+                    jobId={Number(resolvedJobId)}
+                    unitNumber={resolvedUnitNumber}
+                    folders={MOI_SOURCE_DOC_FOLDERS}
+                    title="MOI supporting documents"
+                    showWhenEmpty
+                  />
+                )}
+              </div>
+            )}
 
             {/* Company (from MOI) */}
             <div>
@@ -346,7 +711,7 @@ export function MOAFormModal({
                 disabled={viewMode}
               >
                 <option value="">Select User</option>
-                {users.map((user) => (
+                {pickerUsers.map((user) => (
                   <option key={user.id} value={user.name}>
                     {user.name}
                   </option>
@@ -365,7 +730,7 @@ export function MOAFormModal({
                 disabled={viewMode}
               >
                 <option value="">Select User</option>
-                {users.map((user) => (
+                {pickerUsers.map((user) => (
                   <option key={user.id} value={user.name}>
                     {user.name}
                   </option>
@@ -399,7 +764,7 @@ export function MOAFormModal({
               />
             </div>
 
-            {!workflow && (
+            {!sequentialWorkflowUi && (
               <div className="border border-border rounded-lg p-4 space-y-4">
                 <h4 className="text-sm font-medium">MOA pack checklist</h4>
                 <p className="text-xs text-muted-foreground">Complete before starting MOA circulation (per SOP).</p>
@@ -415,6 +780,11 @@ export function MOAFormModal({
                   <input type="checkbox" checked={packChecklist.cleanAgreementAttached} onChange={(e) => setPackChecklist({ ...packChecklist, cleanAgreementAttached: e.target.checked })} disabled={viewMode} />
                   Clean agreement / appointment letter attached
                 </label>
+                {!viewMode && !isClientUser && (
+                  <p className="text-xs text-muted-foreground -mt-2">
+                    Upload the agreement and other pack files in MOA attachments at the top of this form.
+                  </p>
+                )}
                 {formData.shareMovement && (
                   <label className="flex items-center gap-2 text-sm">
                     <input type="checkbox" checked={packChecklist.shareholdingTableAttached} onChange={(e) => setPackChecklist({ ...packChecklist, shareholdingTableAttached: e.target.checked })} disabled={viewMode} />
@@ -426,24 +796,38 @@ export function MOAFormModal({
                   <input className="px-3 py-2 border border-border rounded-lg text-sm" placeholder="SSM new registration no" value={packChecklist.ssmNewRegistrationNo} onChange={(e) => setPackChecklist({ ...packChecklist, ssmNewRegistrationNo: e.target.value })} disabled={viewMode} />
                   <input className="px-3 py-2 border border-border rounded-lg text-sm" placeholder="Entity type *" value={packChecklist.ssmEntityType} onChange={(e) => setPackChecklist({ ...packChecklist, ssmEntityType: e.target.value })} disabled={viewMode} />
                   <input className="px-3 py-2 border border-border rounded-lg text-sm" placeholder="SSM status *" value={packChecklist.ssmStatus} onChange={(e) => setPackChecklist({ ...packChecklist, ssmStatus: e.target.value })} disabled={viewMode} />
-                  <input className="px-3 py-2 border border-border rounded-lg text-sm md:col-span-2" placeholder="SSM as-at date (yyyy-mm-dd) *" value={packChecklist.ssmAsAtDate} onChange={(e) => setPackChecklist({ ...packChecklist, ssmAsAtDate: e.target.value })} disabled={viewMode} />
+                  <div className="md:col-span-2">
+                    <label className="block mb-1 text-sm">SSM as-at date *</label>
+                    <DateInput
+                      fullWidth
+                      value={packChecklist.ssmAsAtDate}
+                      onChange={(iso) => setPackChecklist({ ...packChecklist, ssmAsAtDate: iso })}
+                      disabled={viewMode}
+                      className="px-3 py-2 border border-border rounded-lg text-sm bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
                 </div>
                 {packErrors.length > 0 && (
-                  <ul className="text-xs text-destructive list-disc pl-4">
+                  <ul ref={packErrorsRef} className="text-xs text-destructive list-disc pl-4">
                     {packErrors.map((err) => <li key={err}>{err}</li>)}
                   </ul>
                 )}
-                {moaFormId && onStartWorkflow && !viewMode && !isClientUser && (
+                {SHOW_MOA_SEQUENTIAL_WORKFLOW && onStartWorkflow && !viewMode && !isClientUser && (
                   <button
                     type="button"
                     className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted"
-                    onClick={() => onStartWorkflow(moaFormId)}
+                    onClick={() => {
+                      const errors = validatePackChecklist();
+                      setPackErrors(errors);
+                      if (errors.length > 0) return;
+                      void onStartWorkflow(buildSubmitPayload());
+                    }}
                   >
                     Start internal routing (optional)
                   </button>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  Internal secretary completes this MOA, then Sharon approves before it is sent to the client for sign-off.
+                  Complete the pack checklist and MOA details, then submit the draft for head secretary approval before client sign-off.
                 </p>
               </div>
             )}
@@ -466,7 +850,7 @@ export function MOAFormModal({
               </div>
             )}
 
-            {workflow && (
+            {sequentialWorkflowUi && workflow && (
               <div className="border-t border-border pt-6 space-y-4">
                 <h3>Sequential approval ({workflow.templateCode})</h3>
                 {workflow.steps.map((step) => (
@@ -513,11 +897,12 @@ export function MOAFormModal({
               </div>
             )}
 
-            {/* Legacy parallel approvals — hidden when workflow active */}
-            <div className={`border-t border-border pt-6 ${workflow ? 'hidden' : ''}`}>
+            {/* Legacy checkbox approvals — client-only; sec uses SignatureCapture via client-approve */}
+            <div className={`border-t border-border pt-6 ${sequentialWorkflowUi || !isClientUser ? 'hidden' : ''}`}>
               <h3 className="mb-4">Approved By</h3>
 
               {/* Senior Manager, Company Secretary */}
+              {templateSections.seniorManagerCoSec && (
               <div className="border border-border rounded-lg p-4 mb-4 bg-muted/30">
                 <h4 className="mb-4">Senior Manager, Company Secretary</h4>
                 <div className="space-y-4">
@@ -539,17 +924,17 @@ export function MOAFormModal({
                       <span>Approve</span>
                     </label>
                     <div className="flex-1">
-                      <input
-                        type="date"
+                      <DateInput
+                        fullWidth
                         value={formData.seniorManagerApproval.date}
-                        onChange={(e) => setFormData({
+                        onChange={(iso) => setFormData({
                           ...formData,
                           seniorManagerApproval: {
                             ...formData.seniorManagerApproval,
-                            date: e.target.value
-                          }
+                            date: iso,
+                          },
                         })}
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+                        className="px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
                         disabled={viewMode}
                       />
                     </div>
@@ -591,8 +976,10 @@ export function MOAFormModal({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Manager - Regulatory & Compliance */}
+              {templateSections.managerRegulatory && (
               <div className="border border-border rounded-lg p-4 mb-4 bg-muted/30">
                 <h4 className="mb-4">Manager - Regulatory & Compliance</h4>
                 <div className="space-y-4">
@@ -614,17 +1001,17 @@ export function MOAFormModal({
                       <span>Approve</span>
                     </label>
                     <div className="flex-1">
-                      <input
-                        type="date"
+                      <DateInput
+                        fullWidth
                         value={formData.managerRegulatoryApproval.date}
-                        onChange={(e) => setFormData({
+                        onChange={(iso) => setFormData({
                           ...formData,
                           managerRegulatoryApproval: {
                             ...formData.managerRegulatoryApproval,
-                            date: e.target.value
-                          }
+                            date: iso,
+                          },
                         })}
-                        className="w-full px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+                        className="px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
                         disabled={viewMode}
                       />
                     </div>
@@ -648,6 +1035,7 @@ export function MOAFormModal({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* MOA Persons from Company */}
               {formData.moaPersonsApprovals.length > 0 && (
@@ -669,11 +1057,11 @@ export function MOAFormModal({
                             <span>Approve</span>
                           </label>
                           <div className="flex-1">
-                            <input
-                              type="date"
+                            <DateInput
+                              fullWidth
                               value={approval.date}
-                              onChange={(e) => handleMOAPersonApprovalChange(index, 'date', e.target.value)}
-                              className="w-full px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
+                              onChange={(iso) => handleMOAPersonApprovalChange(index, 'date', iso)}
+                              className="px-3 py-2 border border-border rounded-lg bg-input-background focus:outline-none focus:ring-2 focus:ring-ring"
                               disabled={viewMode}
                             />
                           </div>
@@ -697,16 +1085,57 @@ export function MOAFormModal({
             </div>
           </div>
 
-          {initialData?.rejections?.length > 0 && (
+          {jobHandoffStatus === 'AdminReview' && !canApproveMoa && !userIsAdmin && !isClientUser && (
+            <div className="px-6 pb-4">
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                <p className="font-medium">Awaiting head secretary approval</p>
+                <p className="mt-1 text-sky-800/90">
+                  This MOA draft has been submitted
+                  {initialData?.submittedForAdminReviewAt
+                    ? ` on ${initialData.submittedForAdminReviewAt}`
+                    : ''}.
+                  Everyone tagged on this item can view it while approval is pending.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {initialData?.rejections?.length > 0 && !isClientUser && (
             <div className="px-6 pb-4">
               <div className="p-3 border border-amber-200 bg-amber-50 rounded-lg text-sm space-y-2">
-                <p className="font-medium text-amber-900">Previous rejections</p>
-                {initialData.rejections.map((r: { userName: string; reason: string; rejectedAt: string }, i: number) => (
-                  <p key={i} className="text-amber-900">
-                    <span className="font-medium">{r.userName}</span> ({r.rejectedAt}): {r.reason}
-                  </p>
+                <p className="font-medium text-amber-900">
+                  {(jobHandoffStatus === 'ResoInProgress' || jobHandoffStatus === 'PendingPrep')
+                    ? 'Returned for revision'
+                    : 'Rejection history'}
+                </p>
+                <p className="text-xs text-amber-800/90">
+                  Visible to everyone tagged on this package line.
+                </p>
+                {initialData.rejections.map((r: {
+                  userName: string;
+                  reason: string;
+                  rejectedAt: string;
+                  stage?: string;
+                }, i: number) => (
+                  <div key={i} className="rounded-md border border-amber-200/80 bg-white/70 px-3 py-2 text-amber-950">
+                    <p className="font-medium">
+                      {r.userName}
+                      <span className="font-normal text-amber-800">
+                        {' · '}
+                        {rejectionStageLabel(r.stage)}
+                        {r.rejectedAt ? ` · ${r.rejectedAt}` : ''}
+                      </span>
+                    </p>
+                    <p className="mt-1">{r.reason}</p>
+                  </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {clientApprovals.length > 0 && (
+            <div className="px-6 pb-2">
+              <ClientSignOffTrail title="MOA sign-off record" approvals={clientApprovals} />
             </div>
           )}
 
@@ -756,18 +1185,27 @@ export function MOAFormModal({
                   Send MOA to client
                 </button>
               )}
-              {isClientUser && viewMode && onClientApprove && initialData?.id && (
+              {isClientUser && viewMode && initialData?.id && !canSignMoa && (
+                <div className="text-sm text-muted-foreground border border-border rounded-lg p-3 bg-muted/30 max-w-lg">
+                  {alreadySignedMoa ? (
+                    <p>You have already signed this MOA.</p>
+                  ) : !needsMoa ? (
+                    <p>You can view this MOA for reference. Only designated MOA signatories can approve and sign.</p>
+                  ) : !isMoaSignoffPhase ? (
+                    <p>This MOA is not open for client sign-off yet.</p>
+                  ) : pendingApprovers.length > 0 ? (
+                    <p>
+                      Awaiting signature from:{' '}
+                      {formatPendingApproverList(pendingApprovers, currentUserName, signatoryHolderNames)}
+                    </p>
+                  ) : (
+                    <p>Your signature is not required on this MOA.</p>
+                  )}
+                </div>
+              )}
+              {canSignMoa && onClientApprove && (
                 <div className="space-y-3 max-w-lg">
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Upload className="w-4 h-4 text-muted-foreground" />
-                    <span>{signatureFile ? signatureFile.name : 'Attach signature (image or PDF)'}</span>
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={(e) => setSignatureFile(e.target.files?.[0] ?? null)}
-                    />
-                  </label>
+                  <SignatureCapture value={signature} onChange={setSignature} />
                   <input
                     className="w-full px-3 py-2 border border-border rounded-lg text-sm"
                     placeholder="Comments (optional)"
@@ -778,18 +1216,14 @@ export function MOAFormModal({
                     <button
                       type="button"
                       onClick={() => {
-                        if (!signatureFile) return;
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          onClientApprove(initialData.id, {
-                            comments: clientSignComments,
-                            signatureFileName: signatureFile.name,
-                            signatureDataUrl: String(reader.result ?? ''),
-                          });
-                        };
-                        reader.readAsDataURL(signatureFile);
+                        if (!signature) return;
+                        onClientApprove(initialData.id, {
+                          comments: clientSignComments,
+                          signatureFileName: signature.fileName,
+                          signatureDataUrl: signature.dataUrl,
+                        });
                       }}
-                      disabled={!signatureFile}
+                      disabled={!signature}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
                     >
                       Approve MOA
@@ -818,7 +1252,11 @@ export function MOAFormModal({
               )}
               {initialData?.pendingApprovers?.length > 0 && (
                 <p className="text-sm text-muted-foreground mt-2">
-                  Awaiting sign-off from: {initialData.pendingApprovers.join(', ')}
+                  Awaiting sign-off from: {formatPendingApproverList(
+                    initialData.pendingApprovers,
+                    currentUserName,
+                    signatoryHolderNames,
+                  )}
                 </p>
               )}
             </div>
@@ -830,18 +1268,48 @@ export function MOAFormModal({
             >
               {viewMode ? 'Close' : 'Cancel'}
             </button>
-            {!viewMode && !workflow && !isClientUser && (
-              <button
-                type="submit"
-                disabled={submitting}
-                className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >
-                {submitting ? 'Saving…' : 'Save MOA'}
-              </button>
+            {!viewMode && !sequentialWorkflowUi && !isClientUser && (
+              <>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="px-6 py-2 border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                >
+                  {submitting ? 'Saving…' : 'Save draft'}
+                </button>
+                {canSubmitForAdminReview && onSubmitForAdminReview && initialData?.jobId && (
+                  <div className="flex flex-col items-end gap-1">
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => void handleSubmitForAdminReview()}
+                      className="inline-flex items-center gap-2 px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+                    >
+                      <Send className="h-4 w-4" />
+                      {submitting ? 'Submitting…' : 'Submit for admin approval'}
+                    </button>
+                    {submitError && (
+                      <p className="text-xs text-destructive text-right max-w-xs">{submitError}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground">Complete the pack checklist above before submitting.</p>
+                  </div>
+                )}
+              </>
             )}
-            {workflow && !isClientUser && (
+            {sequentialWorkflowUi && !isClientUser && (
               <button type="button" onClick={handleClose} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg">
                 Done
+              </button>
+            )}
+            {canMarkExecutionComplete && onMarkExecutionComplete && initialData?.jobId && (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void onMarkExecutionComplete(initialData.jobId)}
+                className="inline-flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+                Mark completed
               </button>
             )}
             </div>

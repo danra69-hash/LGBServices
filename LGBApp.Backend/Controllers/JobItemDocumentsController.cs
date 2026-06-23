@@ -88,6 +88,9 @@ public class JobItemDocumentsController : ControllerBase
         if (!await CanUploadAsync(job))
             return Forbid();
 
+        if (job.TotalQty > 1 && !unitNumber.HasValue)
+            return BadRequest("unitNumber is required for multi-session items.");
+
         var moi = await ResolveMoiForJobAsync(job, unitNumber);
         var normalizedFolder = NormalizeFolder(folder);
         var userId = AuthHelper.CurrentUserId(User) ?? 0;
@@ -99,6 +102,9 @@ public class JobItemDocumentsController : ControllerBase
         JobRequestUnit? unit = null;
         if (unitNumber.HasValue)
             unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+
+        if (unit == null && job.TotalQty > 1)
+            return BadRequest("Session not found for this item.");
 
         var doc = new JobItemDocument
         {
@@ -185,7 +191,12 @@ public class JobItemDocumentsController : ControllerBase
     {
         var query = _context.JobItemDocuments.Where(d => d.JobRequestId == job.JobRequestId);
         if (unit != null)
-            query = query.Where(d => d.JobRequestUnitId == unit.JobRequestUnitId || d.JobRequestUnitId == null);
+        {
+            query = job.TotalQty > 1
+                ? query.Where(d => d.JobRequestUnitId == unit.JobRequestUnitId)
+                : query.Where(d =>
+                    d.JobRequestUnitId == unit.JobRequestUnitId || d.JobRequestUnitId == null);
+        }
 
         if (AuthHelper.IsExternalUser(User))
             return query;

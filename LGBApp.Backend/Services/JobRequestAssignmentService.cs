@@ -50,7 +50,7 @@ public static class JobRequestAssignmentService
             : await MoiFormPairingService.FindMoiFormForCustomerAsync(context, job.CustomerId ?? 0);
 
         if (!SecretarialStaffService.IsReadyForSecretarialAssignment(job, moiForm))
-            throw new InvalidOperationException("MOI intake must be approved before assigning the secretarial team.");
+            throw new InvalidOperationException("MOI must be signed off before assigning the secretarial team.");
 
         var staff = await SecretarialStaffService.GetSecretarialStaffAsync(context);
         if (staff.Count == 0)
@@ -75,15 +75,16 @@ public static class JobRequestAssignmentService
                 related.Status = "In Progress";
 
             if (related.TaskType == "MOA"
-                && related.InternalHandoffStatus is not (
-                    JobHandoffStatuses.ReadyForMoa
-                    or JobHandoffStatuses.MoaCirculation
-                    or JobHandoffStatuses.Completed))
+                && string.IsNullOrWhiteSpace(related.InternalHandoffStatus))
             {
-                JobHandoffService.SetHandoff(related, JobHandoffStatuses.AdminReview);
+                JobHandoffService.SetHandoff(related, JobHandoffStatuses.ResoInProgress);
             }
+
+            if (related.TaskType is "MOI" or "Service")
+                await JobFormProvisioner.EnsureMoaFormsForJobAsync(context, related);
         }
 
+        await JobHandoffService.OnSecretarialTeamAssignedAsync(context, job);
         await context.SaveChangesAsync();
         return await context.JobRequests
             .Include(j => j.Units).ThenInclude(u => u.Assignees).ThenInclude(a => a.User)
