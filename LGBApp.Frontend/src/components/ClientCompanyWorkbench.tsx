@@ -91,7 +91,11 @@ function CircleProgress({ completed, total, size = 64, alert = false }: {
           className={`${alert ? 'text-amber-500' : 'text-primary'} transition-[stroke-dashoffset] duration-300`}
         />
       </svg>
-      <span className="absolute text-xs font-semibold tabular-nums">{completed}/{total}</span>
+      <span
+        className={`absolute font-bold tabular-nums ${size >= 80 ? 'text-base' : size >= 64 ? 'text-sm' : 'text-xs'}`}
+      >
+        {completed}/{total}
+      </span>
     </div>
   );
 }
@@ -327,7 +331,7 @@ export function ClientCompanyWorkbench({
         </div>
 
         <div className="bg-card border border-border rounded-lg p-6 flex flex-col md:flex-row gap-6 items-start">
-          <CircleProgress completed={done} total={total} size={72} alert={categoryAllItems.some(({ job, unit }) => unitNeedsSignature(job, unit, currentUser, isSignatoryView))} />
+          <CircleProgress completed={done} total={total} size={104} alert={categoryAllItems.some(({ job, unit }) => unitNeedsSignature(job, unit, currentUser, isSignatoryView))} />
           <div className="flex-1 min-w-0 space-y-4 w-full">
             <div className="flex flex-wrap gap-2">
               <button
@@ -549,16 +553,16 @@ export function ClientCompanyWorkbench({
                   <button
                     type="button"
                     onClick={() => enterCategory(cat.category)}
-                    className="w-full h-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-primary/5 transition-colors text-center rounded-[12px]"
+                    className="w-full h-full p-4 flex flex-col items-center justify-center gap-3 hover:bg-primary/5 transition-colors text-center rounded-[12px]"
                   >
                     <CircleProgress
                       completed={cat.completed}
                       total={cat.total}
-                      size={56}
+                      size={84}
                       alert={browseMode === 'open' && cat.needsSign}
                     />
-                    <span className="text-sm font-medium leading-snug">{cat.category}</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-lg font-bold leading-snug px-1">{cat.category}</span>
+                    <span className="text-base font-medium text-muted-foreground">
                       {browseMode === 'completed'
                         ? `${cat.completed} completed`
                         : `${cat.open} open · ${cat.completed} done`}
@@ -593,15 +597,15 @@ export function ClientCompanyWorkbench({
                 <button
                   type="button"
                   onClick={() => enterCompany(company, 'open')}
-                  className="w-full h-full p-3 flex flex-col items-center justify-center gap-2 hover:bg-primary/5 transition-colors text-center rounded-[12px]"
+                  className="w-full h-full p-3.5 flex flex-col items-center justify-center gap-3 hover:bg-primary/5 transition-colors text-center rounded-[12px]"
                 >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
                     meta.needsSign ? 'bg-amber-100 text-amber-700' : 'bg-primary/10 text-primary'
                   }`}>
-                    <Building2 className="w-5 h-5" />
+                    <Building2 className="w-7 h-7" />
                   </div>
-                  <span className="text-sm font-semibold leading-snug line-clamp-3 px-1">{company}</span>
-                  <span className="text-sm font-medium text-muted-foreground tabular-nums">
+                  <span className="text-lg sm:text-xl font-bold leading-snug line-clamp-3 px-1">{company}</span>
+                  <span className="text-lg font-bold text-muted-foreground tabular-nums">
                     {meta.completed}/{meta.total} done
                   </span>
                 </button>
@@ -616,9 +620,9 @@ export function ClientCompanyWorkbench({
                     e.stopPropagation();
                     enterCompany(company, 'completed');
                   }}
-                  className="absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 px-1.5 py-1 rounded-md bg-green-600 text-white text-[11px] font-medium shadow-sm hover:bg-green-700"
+                  className="absolute bottom-2.5 left-2.5 z-10 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-600 text-white text-base font-bold shadow-sm hover:bg-green-700"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <CheckCircle2 className="w-5 h-5" />
                   {meta.completed}
                 </button>
               )}
@@ -630,9 +634,9 @@ export function ClientCompanyWorkbench({
                   e.stopPropagation();
                   setOpenDropdown((prev) => (prev === company ? null : company));
                 }}
-                className="absolute top-2 right-2 z-10 p-1 rounded bg-background/90 border border-border text-muted-foreground hover:text-foreground"
+                className="absolute top-2.5 right-2.5 z-10 p-2 rounded-lg bg-background/90 border border-border text-muted-foreground hover:text-foreground"
               >
-                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`w-5 h-5 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
               </button>
               {dropdownOpen && (
                 <div className="absolute z-20 left-0 right-0 top-[calc(100%-0.5rem)] mt-1 bg-card border border-border rounded-lg shadow-lg p-2 text-left">
@@ -643,15 +647,15 @@ export function ClientCompanyWorkbench({
                       <button
                         key={s.category}
                         type="button"
-                        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 text-xs rounded hover:bg-muted"
+                        className="w-full flex items-center justify-between gap-2 px-2 py-2 text-sm rounded hover:bg-muted"
                         onClick={() => {
                           enterCompany(company, s.open > 0 ? 'open' : 'completed');
                           enterCategory(s.category, s.open > 0 ? 'open' : 'completed');
                           setOpenDropdown(null);
                         }}
                       >
-                        <span className="truncate">{s.category}</span>
-                        <span className="tabular-nums text-muted-foreground shrink-0">
+                        <span className="truncate font-medium">{s.category}</span>
+                        <span className="tabular-nums text-muted-foreground shrink-0 font-medium">
                           {s.open === 0 ? 'Done' : `${s.open} open`} · {s.completed}/{s.total}
                         </span>
                       </button>
