@@ -11,7 +11,6 @@ WORKDIR /app
 COPY --from=build /app/publish .
 RUN mkdir -p /data /app/uploads
 
-ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV Database__Provider=Sqlite
 ENV ConnectionStrings__DefaultConnection=Data Source=/data/lgbapp.db
@@ -20,4 +19,5 @@ ENV AllowedHosts=*
 
 EXPOSE 8080
 VOLUME ["/data", "/app/uploads"]
-ENTRYPOINT ["dotnet", "LGBApp.Backend.dll"]
+# Railway injects PORT — bind to that (fallback 8080 for local docker runs)
+ENTRYPOINT ["sh", "-c", "dotnet LGBApp.Backend.dll --urls http://0.0.0.0:${PORT:-8080}"]
