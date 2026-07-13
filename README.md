@@ -105,6 +105,8 @@ python3 build-user-roles-pdf.py
 
 Local dev uses SQLite and seeded demo accounts. For a real deployment (SQL Server, HTTPS, many users, persistent uploads), follow **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
+For **Vercel (frontend) + Supabase (client SDK)**, see **[docs/deploy/vercel-supabase.md](docs/deploy/vercel-supabase.md)**.
+
 Quick pointers:
 
 - Set `ASPNETCORE_ENVIRONMENT=Production` and `Database:Provider` to `SqlServer`
