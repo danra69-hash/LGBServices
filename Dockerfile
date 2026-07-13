@@ -19,6 +19,6 @@ ENV AllowedHosts=*
 ENV SEED_FULL=false
 
 EXPOSE 8080
-VOLUME ["/data", "/app/uploads"]
+# Do not use Docker VOLUME — Railway requires its own volume mount at /data
 # Railway injects PORT — bind to that (fallback 8080 for local docker runs)
-ENTRYPOINT ["sh", "-c", "echo Starting on PORT=${PORT:-8080} && dotnet LGBApp.Backend.dll --urls http://0.0.0.0:${PORT:-8080}"]
+ENTRYPOINT ["sh", "-c", "mkdir -p /data /app/uploads && echo Starting on PORT=${PORT:-8080} && dotnet LGBApp.Backend.dll --urls http://0.0.0.0:${PORT:-8080}"]
