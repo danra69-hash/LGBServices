@@ -1,0 +1,18 @@
+---
+description: Always commit and push after changes so Vercel/Railway redeploy
+alwaysApply: true
+---
+
+# Auto-push for live deploys
+
+This app is live on Vercel (frontend) and Railway (API).
+
+After finishing work that changes the repo in this conversation:
+
+1. Commit relevant files with a clear message
+2. Push to `origin main` immediately
+3. Do **not** wait for the user to ask to push
+
+Skip only when there is nothing to commit, or the user explicitly says not to push/commit.
+
+Never commit secrets (`.env`, `.env.local`, keys, connection strings with passwords).
