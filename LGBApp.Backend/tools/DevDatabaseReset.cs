@@ -23,8 +23,7 @@ public static class DevDatabaseReset
         Console.WriteLine("Resetting development database…");
 
         await context.Database.EnsureDeletedAsync();
-        await context.Database.EnsureCreatedAsync();
-        SqliteSchemaMigrator.Apply(context);
+        DatabaseBootstrap.ApplyMigrations(context, runSqliteHandMigrator: true);
 
         WorkflowConfigSeeder.SeedReferenceData(context);
         FigmaProductCatalog.SyncCatalog(context);

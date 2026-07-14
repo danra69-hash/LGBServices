@@ -195,9 +195,9 @@ using (var scope = app.Services.CreateScope())
             "true",
             StringComparison.OrdinalIgnoreCase);
 
-        Console.WriteLine($"[Startup] Sqlite init (SEED_FULL={seedFull})…");
-        context.Database.EnsureCreated();
-        SqliteSchemaMigrator.Apply(context);
+        Console.WriteLine($"[Startup] Sqlite init via EF Migrate (SEED_FULL={seedFull})…");
+        // Wave 4: Migrate() + stamp legacy DBs; hand migrator still runs for coexistence.
+        DatabaseBootstrap.ApplyMigrations(context, runSqliteHandMigrator: true);
         WorkflowConfigSeeder.Seed(context);
 
         // C2: seeded default-password staff only in Development or when SEED_STAFF=true
@@ -267,7 +267,8 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        context.Database.Migrate();
+        Console.WriteLine("[Startup] SqlServer init via EF Migrate…");
+        DatabaseBootstrap.ApplyMigrations(context, runSqliteHandMigrator: false);
         WorkflowConfigSeeder.SeedReferenceData(context);
         context.SaveChanges();
         FigmaProductCatalog.SyncCatalog(context);

@@ -10,6 +10,7 @@ Skip Supabase for now. Use **Railway** (free trial / hobby) + SQLite — good en
 2. **New Project** → **Deploy from GitHub repo** → `Ryannnism/LGBTesting`  
 3. It should pick up the root `Dockerfile`  
 4. Add a **Volume** mounted at `/data` (keeps the SQLite DB)  
+   - After Wave 4, boots use EF `Migrate()` (existing DBs are baseline-stamped; no data wipe). See `docs/deploy/MIGRATIONS.md`.  
 5. **Variables** (Settings → Variables):
 
 ```
