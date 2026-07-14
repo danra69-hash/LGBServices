@@ -417,6 +417,10 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "MOIForms", "SchemaVersion", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(context, "MOAForms", "CustomerId", "INTEGER NULL");
         EnsureColumn(context, "MOAForms", "SchemaVersion", "INTEGER NOT NULL DEFAULT 1");
+
+        // N2: optimistic concurrency stamps
+        EnsureColumn(context, "MOIForms", "ConcurrencyStamp", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'");
+        EnsureColumn(context, "MOAForms", "ConcurrencyStamp", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'");
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)

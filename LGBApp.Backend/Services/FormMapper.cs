@@ -25,6 +25,7 @@ public static class FormMapper
             Workflow = workflow,
             CreatedAt = form.CreatedAt.ToString("yyyy-MM-dd"),
             UpdatedAt = form.UpdatedAt.ToString("O"),
+            ConcurrencyStamp = form.ConcurrencyStamp.ToString("N"),
         }, form, customer);
 
     public static FormResponse ToMoaResponse(
@@ -64,6 +65,7 @@ public static class FormMapper
             Workflow = workflow,
             CreatedAt = form.CreatedAt.ToString("yyyy-MM-dd"),
             UpdatedAt = form.UpdatedAt.ToString("O"),
+            ConcurrencyStamp = form.ConcurrencyStamp.ToString("N"),
             UnitNumber = ReadMoaUnitNumber(form),
             JobRequestUnitId = form.JobRequestUnitId,
         }, form, customer);

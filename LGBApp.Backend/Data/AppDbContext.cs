@@ -1,11 +1,39 @@
 ﻿using LGBApp.Backend.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace LGBApp.Backend.Data;
 
 public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    public override int SaveChanges()
+    {
+        RotateFormConcurrencyStamps();
+        return base.SaveChanges();
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        RotateFormConcurrencyStamps();
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    private void RotateFormConcurrencyStamps()
+    {
+        foreach (var entry in ChangeTracker.Entries<MOIForm>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+                entry.Entity.ConcurrencyStamp = Guid.NewGuid();
+        }
+
+        foreach (var entry in ChangeTracker.Entries<MOAForm>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+                entry.Entity.ConcurrencyStamp = Guid.NewGuid();
+        }
+    }
 
     public DbSet<User> Users { get; set; }
     public DbSet<Customer> Customers { get; set; }
@@ -199,6 +227,7 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(f => f.MOIFormId);
             entity.Property(f => f.SchemaVersion).HasDefaultValue(1);
+            entity.Property(f => f.ConcurrencyStamp).IsConcurrencyToken();
             entity.HasOne(f => f.JobRequest)
                 .WithMany()
                 .HasForeignKey(f => f.JobRequestId)
@@ -219,6 +248,7 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(f => f.MOAFormId);
             entity.Property(f => f.SchemaVersion).HasDefaultValue(1);
+            entity.Property(f => f.ConcurrencyStamp).IsConcurrencyToken();
             entity.HasOne(f => f.JobRequest)
                 .WithMany()
                 .HasForeignKey(f => f.JobRequestId)

@@ -126,7 +126,8 @@ public class MOIFormsController : ControllerBase
                 _context, job.JobRequestId, unit?.JobRequestUnitId, job.TotalQty <= 1);
             if (existing != null)
             {
-                await ApplyFormRequestAsync(existing, request, job, unit);
+                var applyConflict = await ApplyFormRequestAsync(existing, request, job, unit);
+                if (applyConflict != null) return applyConflict;
                 var linkedCustomer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, existing.Company);
                 return Ok(FormMapper.ToMoiResponse(existing, customer: linkedCustomer));
             }
@@ -235,11 +236,12 @@ public class MOIFormsController : ControllerBase
                 form.JobRequestUnitId = unit.JobRequestUnitId;
         }
 
-        await ApplyFormRequestAsync(form, request, job, unit);
+        var applyConflict = await ApplyFormRequestAsync(form, request, job, unit);
+        if (applyConflict != null) return applyConflict;
         return NoContent();
     }
 
-    private async Task ApplyFormRequestAsync(
+    private async Task<ActionResult?> ApplyFormRequestAsync(
         MOIForm form,
         FormRequest request,
         JobRequest? job,
@@ -268,6 +270,7 @@ public class MOIFormsController : ControllerBase
             && !TaskFormVisibilityHelper.AwaitingIntakeApproval(job, form))
             form.WorkflowState = MoiWorkflowStates.PendingRecommendation;
 
+        var previousUpdatedAt = form.UpdatedAt;
         form.UpdatedAt = DateTime.UtcNow;
 
         if (job != null)
@@ -279,7 +282,7 @@ public class MOIFormsController : ControllerBase
                 JobHandoffService.SetHandoff(job, JobHandoffStatuses.PendingPrep);
         }
 
-        await _context.SaveChangesAsync();
+        return await FormConcurrencyHelper.SaveWithConcurrencyAsync(_context, previousUpdatedAt);
     }
 
     [HttpPost("{id}/submit-for-approval")]
@@ -290,6 +293,10 @@ public class MOIFormsController : ControllerBase
 
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
+
+        // N4: authz before state (hide existence from other tenants)
+        if (!await FormAccessHelper.CanAccessMoiFormAsync(_context, User, form))
+            return NotFound();
 
         if (form.WorkflowState is not (MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected))
             return BadRequest(new { message = "MOI can only be submitted for approval from Draft or after rejection." });
@@ -340,11 +347,13 @@ public class MOIFormsController : ControllerBase
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 
+        // N4: tenant/access before state oracle
+        var customer = await WorkflowService.ResolveCustomerForMoiAsync(_context, form);
+        if (customer == null || !AuthHelper.CanAccessCustomer(User, customer.CustomerId))
+            return NotFound();
+
         if (form.WorkflowState != MoiWorkflowStates.PendingClientMoiApproval)
             return BadRequest(new { message = "MOI is not awaiting client approval." });
-
-        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         var holder = ClientApprovalService.FindMoiApprovalHolderForUser(customer, user);
         if (holder == null)
@@ -392,11 +401,13 @@ public class MOIFormsController : ControllerBase
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 
+        // N4: tenant/access before state oracle
+        var customer = await WorkflowService.ResolveCustomerForMoiAsync(_context, form);
+        if (customer == null || !AuthHelper.CanAccessCustomer(User, customer.CustomerId))
+            return NotFound();
+
         if (form.WorkflowState != MoiWorkflowStates.PendingClientMoiApproval)
             return BadRequest(new { message = "MOI is not awaiting client approval." });
-
-        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         var holder = ClientApprovalService.FindMoiApprovalHolderForUser(customer, user);
         if (holder == null)
@@ -421,6 +432,10 @@ public class MOIFormsController : ControllerBase
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 
+        // N4: access before state (external users get 404, not a workflow oracle)
+        if (!await FormAccessHelper.CanAccessMoiFormAsync(_context, User, form))
+            return NotFound();
+
         // S7: recommend only from prep (backtest) or already-recommended (idempotent update)
         if (form.WorkflowState is not (MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation))
         {
@@ -430,7 +445,7 @@ public class MOIFormsController : ControllerBase
             });
         }
 
-        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
+        var customer = await WorkflowService.ResolveCustomerForMoiAsync(_context, form);
         if (customer == null) return BadRequest(new { message = "Customer not found for company." });
 
         var isAdmin = AuthHelper.IsAdmin(User);

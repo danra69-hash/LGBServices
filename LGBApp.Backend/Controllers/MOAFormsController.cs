@@ -166,6 +166,7 @@ public class MOAFormsController : ControllerBase
         var conflict = FormConcurrencyHelper.CheckExpectedUpdatedAt(form.UpdatedAt, request.ExpectedUpdatedAt);
         if (conflict != null) return conflict;
 
+        var previousUpdatedAt = form.UpdatedAt;
         form.FinanceRelated = request.FinanceRelated;
         form.BankSignatoryMatter = request.BankSignatoryMatter;
         form.ShareMovement = request.ShareMovement;
@@ -182,7 +183,8 @@ public class MOAFormsController : ControllerBase
             SsmAsAtDate = request.Checklist.SsmAsAtDate,
         });
         form.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
+        var saveConflict = await FormConcurrencyHelper.SaveWithConcurrencyAsync(_context, previousUpdatedAt);
+        if (saveConflict != null) return saveConflict;
 
         var workflow = await WorkflowService.GetWorkflowForMoaAsync(_context, id);
         return FormMapper.ToMoaResponse(form, workflow);
@@ -203,6 +205,12 @@ public class MOAFormsController : ControllerBase
         var form = await _context.MOAForms.FindAsync(id);
         if (form == null) return NotFound();
 
+        // N4: tenant check before state oracle
+        var customer = await WorkflowService.ResolveCustomerForMoaAsync(_context, form);
+        if (customer == null) return NotFound();
+        if (isExternal && !AuthHelper.CanAccessCustomer(User, customer.CustomerId))
+            return NotFound();
+
         if (!form.JobRequestId.HasValue)
             return BadRequest(new { message = "MOA must be linked to a job." });
 
@@ -215,12 +223,6 @@ public class MOAFormsController : ControllerBase
         var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, form);
         if (!JobHandoffResolver.IsMoaClientSignoffHandoff(handoff))
             return BadRequest(new { message = "MOA is not available for client sign-off." });
-
-        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest(new { message = "Customer not found." });
-
-        if (isExternal && !AuthHelper.CanAccessCustomer(User, customer.CustomerId))
-            return Forbid();
 
         var holderName = ClientApprovalService.ResolveMoaSignerName(customer, user, isInternalSigner);
         if (holderName == null)
@@ -262,6 +264,11 @@ public class MOAFormsController : ControllerBase
         var form = await _context.MOAForms.FindAsync(id);
         if (form == null) return NotFound();
 
+        // N4: tenant check before state oracle
+        var customer = await WorkflowService.ResolveCustomerForMoaAsync(_context, form);
+        if (customer == null || !AuthHelper.CanAccessCustomer(User, customer.CustomerId))
+            return NotFound();
+
         if (!form.JobRequestId.HasValue)
             return BadRequest(new { message = "MOA must be linked to a job." });
 
@@ -274,12 +281,6 @@ public class MOAFormsController : ControllerBase
         var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, form);
         if (!JobHandoffResolver.IsMoaClientSignoffHandoff(handoff))
             return BadRequest(new { message = "MOA is not available for client sign-off." });
-
-        var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest(new { message = "Customer not found." });
-
-        if (!AuthHelper.CanAccessCustomer(User, customer.CustomerId))
-            return Forbid();
 
         if (ClientApprovalService.FindMoaHolderForUser(customer, user) == null)
             return Forbid();
@@ -378,6 +379,7 @@ public class MOAFormsController : ControllerBase
         var conflict = FormConcurrencyHelper.CheckExpectedUpdatedAt(form.UpdatedAt, request.ExpectedUpdatedAt);
         if (conflict != null) return conflict;
 
+        var previousUpdatedAt = form.UpdatedAt;
         form.MOIFormId = request.MoiFormId ?? form.MOIFormId;
         form.Company = request.Company;
         form.FormDataJson = JsonHelper.Serialize(request.Data);
@@ -388,7 +390,8 @@ public class MOAFormsController : ControllerBase
             form.FormTemplateCode = request.FormTemplateCode;
         form.UpdatedAt = DateTime.UtcNow;
 
-        await _context.SaveChangesAsync();
+        var saveConflict = await FormConcurrencyHelper.SaveWithConcurrencyAsync(_context, previousUpdatedAt);
+        if (saveConflict != null) return saveConflict;
         return NoContent();
     }
 

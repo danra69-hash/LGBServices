@@ -83,16 +83,48 @@ public static class JobRequestUnitService
             unit.Status = "In Progress";
     }
 
-    public static async Task RemoveAssigneeAsync(AppDbContext context, JobRequestUnit unit, int userId)
+    public static async Task RemoveAssigneeAsync(
+        AppDbContext context,
+        JobRequestUnit unit,
+        int userId,
+        JobRequest? job = null)
     {
         var row = await context.JobRequestUnitAssignees
             .FirstOrDefaultAsync(a => a.JobRequestUnitId == unit.JobRequestUnitId && a.UserId == userId);
         if (row != null)
+        {
             context.JobRequestUnitAssignees.Remove(row);
+            // Keep navigation in sync so SyncUnitAssigneeFieldsAsync (EF4 path) does not count a deleted row
+            if (context.Entry(unit).Collection(u => u.Assignees).IsLoaded)
+                unit.Assignees.Remove(row);
+        }
 
         await SyncUnitAssigneeFieldsAsync(context, unit);
-        if (!unit.AssignedUserId.HasValue && unit.Status == "In Progress")
+        if (unit.AssignedUserId.HasValue)
+            return;
+
+        if (unit.Status == "In Progress")
             unit.Status = "Pending";
+
+        // N3: last assignee removed mid-prep → need reassignment, not orphaned PendingPrep
+        if (job == null)
+            return;
+
+        var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit);
+        var midPrep = string.Equals(handoff, JobHandoffStatuses.PendingPrep, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(handoff, JobHandoffStatuses.ResoInProgress, StringComparison.OrdinalIgnoreCase);
+        if (!midPrep)
+            return;
+
+        var moaQuery = context.MOAForms.Where(f => f.JobRequestId == job.JobRequestId);
+        if (unit.JobRequestUnitId != 0 && job.TotalQty > 1)
+            moaQuery = moaQuery.Where(f => f.JobRequestUnitId == unit.JobRequestUnitId);
+        var moa = await moaQuery.OrderByDescending(f => f.UpdatedAt).FirstOrDefaultAsync();
+        if (moa?.SubmittedForAdminReviewAt != null)
+            return;
+
+        JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.AwaitingSecAssignment);
+        unit.Status = "Pending";
     }
 
     public static async Task SyncUnitAssigneeFieldsAsync(AppDbContext context, JobRequestUnit unit)
@@ -109,6 +141,11 @@ public static class JobRequestUnitService
         {
             assignees = await LoadAssigneesAsync(context, unit);
         }
+
+        // Ignore rows pending delete (RemoveAssigneeAsync marks them Deleted before SaveChanges)
+        assignees = assignees
+            .Where(a => context.Entry(a).State != EntityState.Deleted)
+            .ToList();
 
         var names = assignees
             .Select(a => a.User.Name.Trim())
@@ -169,9 +206,16 @@ public static class JobRequestUnitService
         if (unit.Status != "Completed")
             return;
 
+        // N1: roll back Completed handoff to PendingExecute for MOA execution path
+        var handoffBefore = JobHandoffResolver.ResolveEffectiveHandoff(job, unit);
+
         unit.CompletedAt = null;
         var assignees = await LoadAssigneesAsync(context, unit);
         unit.Status = assignees.Count > 0 || unit.AssignedUserId.HasValue ? "In Progress" : "Pending";
+
+        if (string.Equals(handoffBefore, JobHandoffStatuses.Completed, StringComparison.OrdinalIgnoreCase))
+            JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.PendingExecute);
+
         await SyncUnitToTrackerAsync(context, unit, job);
     }
 

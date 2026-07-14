@@ -232,7 +232,7 @@ public class ClientJobsController : ControllerBase
             return BadRequest(new { message = "No unit available to assign." });
 
         if (request.Remove)
-            await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, assignee.UserId);
+            await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, assignee.UserId, job);
         else
             await JobRequestUnitService.AddAssigneeAsync(_context, unit, assignee);
 

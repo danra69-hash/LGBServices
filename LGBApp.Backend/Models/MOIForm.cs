@@ -25,4 +25,6 @@ public class MOIForm
     public string RejectionsJson { get; set; } = "[]";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    /// <summary>N2: optimistic concurrency token (rotated on every write).</summary>
+    public Guid ConcurrencyStamp { get; set; } = Guid.NewGuid();
 }

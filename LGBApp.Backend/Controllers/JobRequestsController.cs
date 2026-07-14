@@ -340,7 +340,7 @@ public class JobRequestsController : ControllerBase
             return BadRequest(new { message = "This session is not ready for team assignment yet. Complete the prior session's MOI first." });
 
         if (request.Remove)
-            await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, user.UserId);
+            await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, user.UserId, job);
         else
         {
             await JobRequestUnitService.AddAssigneeAsync(_context, unit, user);
