@@ -350,7 +350,7 @@ public class JobRequestsController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Comments))
             job.AssignmentComments = request.Comments;
 
-        if (DateTime.TryParse(request.AcceptedDate, out var accepted))
+        if (DateOnlyHelper.Parse(request.AcceptedDate) is { } accepted)
             job.DateRequested = accepted;
 
         await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
@@ -572,6 +572,7 @@ public class JobRequestsController : ControllerBase
                 {
                     _context.CompletedServices.Add(new CompletedService
                     {
+                        JobRequestId = job.JobRequestId,
                         Customer = job.Customer,
                         Service = job.Service,
                         UsedQty = job.UsedQty,
@@ -642,19 +643,26 @@ public class JobRequestsController : ControllerBase
             if (request.Status == "Completed" && job.UsedQty < job.TotalQty)
                 job.UsedQty = job.TotalQty;
 
-            _context.CompletedServices.Add(new CompletedService
+            var alreadyRecorded = request.Status == "Completed"
+                && await _context.CompletedServices.AnyAsync(c =>
+                    c.JobRequestId == job.JobRequestId && c.Status == "Completed");
+            if (!alreadyRecorded)
             {
-                Customer = job.Customer,
-                Service = job.Service,
-                UsedQty = job.UsedQty,
-                TotalQty = job.TotalQty,
-                DateRequested = job.DateRequested,
-                DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
-                AccountHolder = job.AccountHolder,
-                JobAssignedTo = job.JobAssignedTo,
-                Status = request.Status,
-                CreatedAt = DateTime.UtcNow
-            });
+                _context.CompletedServices.Add(new CompletedService
+                {
+                    JobRequestId = job.JobRequestId,
+                    Customer = job.Customer,
+                    Service = job.Service,
+                    UsedQty = job.UsedQty,
+                    TotalQty = job.TotalQty,
+                    DateRequested = job.DateRequested,
+                    DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
+                    AccountHolder = job.AccountHolder,
+                    JobAssignedTo = job.JobAssignedTo,
+                    Status = request.Status,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
         }
 
         await _context.SaveChangesAsync();

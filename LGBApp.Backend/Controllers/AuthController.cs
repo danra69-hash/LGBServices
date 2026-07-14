@@ -36,12 +36,17 @@ public class AuthController : ControllerBase
     {
         if (!env.IsDevelopment())
             return NotFound();
-        if (await _context.Users.AnyAsync(u => u.Email == request.Email))
-            return Conflict("Email is already registered.");
+        var email = PasswordPolicy.NormalizeEmail(request.Email);
+        if (!PasswordPolicy.IsValidEmail(email))
+            return BadRequest(new { message = "A valid email address is required." });
+        if (!PasswordPolicy.MeetsMinLength(request.Password))
+            return BadRequest(new { message = $"Password must be at least {PasswordPolicy.MinLength} characters." });
+        if (await _context.Users.AnyAsync(u => u.Email.ToLower() == email))
+            return Conflict(new { message = "Email is already registered." });
 
         var user = new User
         {
-            Email = request.Email,
+            Email = email,
             PasswordHash = PasswordHasher.Hash(request.Password),
             Name = request.Name,
             Mobile = request.Mobile,
@@ -65,11 +70,11 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth")]
     public async Task<ActionResult<AuthResponse>> Login(LoginRequest request)
     {
-        var email = request.Email.Trim();
+        var email = PasswordPolicy.NormalizeEmail(request.Email);
         var user = await _context.Users
             .Include(u => u.Customer!)
             .ThenInclude(c => c.AccountHolders)
-            .FirstOrDefaultAsync(u => u.Email.ToLower() == email.ToLower());
+            .FirstOrDefaultAsync(u => u.Email.ToLower() == email);
         if (user == null || !PasswordHasher.Verify(request.Password, user.PasswordHash))
             return Unauthorized("Invalid email or password.");
 
@@ -110,8 +115,8 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<MessageResponse>> ResetPassword(ResetPasswordWithOtpRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
-            return BadRequest(new { message = "New password must be at least 6 characters." });
+        if (!PasswordPolicy.MeetsMinLength(request.NewPassword))
+            return BadRequest(new { message = $"New password must be at least {PasswordPolicy.MinLength} characters." });
 
         if (request.NewPassword != request.ConfirmPassword)
             return BadRequest(new { message = "New password and confirmation do not match." });
@@ -132,8 +137,8 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<ActionResult<AuthResponse>> ChangePassword(ChangePasswordRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
-            return BadRequest(new { message = "New password must be at least 6 characters." });
+        if (!PasswordPolicy.MeetsMinLength(request.NewPassword))
+            return BadRequest(new { message = $"New password must be at least {PasswordPolicy.MinLength} characters." });
 
         if (request.NewPassword != request.ConfirmPassword)
             return BadRequest(new { message = "New password and confirmation do not match." });

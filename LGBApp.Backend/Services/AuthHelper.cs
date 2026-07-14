@@ -110,8 +110,9 @@ public static class AuthHelper
             return true;
 
         var userId = CurrentUserId(user);
-        if (userId.HasValue && assignedUserId.HasValue)
-            return userId.Value == assignedUserId.Value;
+        // S8: id mismatch must fall through to comma-list name check (shared assignments)
+        if (userId.HasValue && assignedUserId.HasValue && userId.Value == assignedUserId.Value)
+            return true;
 
         var name = CurrentUserName(user);
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(jobAssignedTo))

@@ -404,6 +404,13 @@ public static class SqliteSchemaMigrator
             CREATE INDEX IF NOT EXISTS "IX_PasswordResetOtps_Email_CreatedAt"
             ON "PasswordResetOtps" ("Email", "CreatedAt");
             """);
+
+        // S3: tie completed history to the originating job
+        EnsureColumn(context, "CompletedServices", "JobRequestId", "INTEGER NULL");
+        context.Database.ExecuteSqlRaw("""
+            CREATE INDEX IF NOT EXISTS "IX_CompletedServices_JobRequestId"
+            ON "CompletedServices" ("JobRequestId");
+            """);
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)

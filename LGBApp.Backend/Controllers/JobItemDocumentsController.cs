@@ -83,6 +83,9 @@ public class JobItemDocumentsController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(new { message = "File is required." });
 
+        if (!UploadFilePolicy.TryResolve(file.FileName, out _, out var contentType, out var uploadError))
+            return BadRequest(new { message = uploadError });
+
         var job = await LoadJobAsync(jobId);
         if (job == null) return NotFound();
         if (!await CanUploadAsync(job))
@@ -95,7 +98,8 @@ public class JobItemDocumentsController : ControllerBase
         var normalizedFolder = NormalizeFolder(folder);
         var userId = AuthHelper.CurrentUserId(User) ?? 0;
         var user = await _context.Users.FindAsync(userId);
-        var storageKey = JobItemDocumentStorage.BuildStorageKey(jobId, normalizedFolder, file.FileName);
+        var safeFileName = Path.GetFileName(file.FileName);
+        var storageKey = JobItemDocumentStorage.BuildStorageKey(jobId, normalizedFolder, safeFileName);
 
         await JobItemDocumentStorage.SaveAsync(_env, storageKey, file.OpenReadStream());
 
@@ -111,9 +115,9 @@ public class JobItemDocumentsController : ControllerBase
             JobRequestId = jobId,
             JobRequestUnitId = unit?.JobRequestUnitId,
             Folder = normalizedFolder,
-            FileName = Path.GetFileName(file.FileName),
+            FileName = safeFileName,
             StorageKey = storageKey.Replace('\\', '/'),
-            ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+            ContentType = contentType,
             UploadedByUserId = userId,
             UploadedByName = user?.Name ?? string.Empty,
             UploadedAt = DateTime.UtcNow,

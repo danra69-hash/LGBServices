@@ -29,17 +29,6 @@ public class CompletedServicesController : ControllerBase
         if (year.HasValue)
             query = query.Where(s => s.DateCompleted.Year == year.Value);
 
-        if (!AuthHelper.IsAdmin(User))
-        {
-            var userId = AuthHelper.CurrentUserId(User);
-            if (!userId.HasValue)
-                return Ok(Array.Empty<CompletedServiceResponse>());
-
-            var userName = AuthHelper.CurrentUserName(User) ?? string.Empty;
-            query = query.Where(s =>
-                s.JobAssignedTo.ToLower() == userName.ToLower());
-        }
-
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.ToLower();
@@ -54,6 +43,32 @@ public class CompletedServicesController : ControllerBase
             .OrderByDescending(s => s.DateCompleted)
             .ToListAsync();
 
+        // S2: JobAssignedTo may be a comma-joined multi-assignee list
+        if (!AuthHelper.IsAdmin(User))
+        {
+            var userId = AuthHelper.CurrentUserId(User);
+            if (!userId.HasValue)
+                return Ok(Array.Empty<CompletedServiceResponse>());
+
+            var userName = (AuthHelper.CurrentUserName(User) ?? string.Empty).Trim();
+            services = services
+                .Where(s => IsAssigneeMatch(s.JobAssignedTo, userName))
+                .ToList();
+        }
+
         return services.Select(CompletedServiceMapper.ToResponse).ToList();
+    }
+
+    private static bool IsAssigneeMatch(string jobAssignedTo, string userName)
+    {
+        if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrWhiteSpace(jobAssignedTo))
+            return false;
+
+        if (string.Equals(jobAssignedTo.Trim(), userName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return jobAssignedTo
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(part => string.Equals(part, userName, StringComparison.OrdinalIgnoreCase));
     }
 }

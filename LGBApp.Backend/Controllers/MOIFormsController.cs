@@ -401,8 +401,14 @@ public class MOIFormsController : ControllerBase
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 
-        if (form.WorkflowState == MoiWorkflowStates.Approved)
-            return BadRequest(new { message = "MOI already approved." });
+        // S7: recommend only from prep (backtest) or already-recommended (idempotent update)
+        if (form.WorkflowState is not (MoiWorkflowStates.PendingPrep or MoiWorkflowStates.PendingRecommendation))
+        {
+            return BadRequest(new
+            {
+                message = $"MOI can only be recommended from PendingPrep or PendingRecommendation (current: '{form.WorkflowState}').",
+            });
+        }
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest(new { message = "Customer not found for company." });

@@ -108,8 +108,8 @@ public class PasswordResetService
             throw new DomainException("Invalid or expired reset code.");
         }
 
-        if (newPassword.Length < 6)
-            throw new DomainException("New password must be at least 6 characters.");
+        if (!PasswordPolicy.MeetsMinLength(newPassword))
+            throw new DomainException($"New password must be at least {PasswordPolicy.MinLength} characters.");
 
         user.PasswordHash = PasswordHasher.Hash(newPassword);
         user.MustChangePassword = false;

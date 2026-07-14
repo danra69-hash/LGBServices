@@ -65,6 +65,9 @@ public class InvoicesController : ControllerBase
         if (request.Amount <= 0)
             return BadRequest(new { message = "Amount must be greater than zero." });
 
+        if (!string.IsNullOrWhiteSpace(request.Currency) && request.Currency.Trim().Length > 10)
+            return BadRequest(new { message = "Currency must be at most 10 characters." });
+
         if (request.JobRequestId.HasValue)
         {
             var job = await _context.JobRequests.FindAsync(request.JobRequestId.Value);

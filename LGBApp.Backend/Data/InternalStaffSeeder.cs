@@ -32,7 +32,8 @@ public static class InternalStaffSeeder
         string initialPassword = "password123")
     {
         if (string.IsNullOrWhiteSpace(initialPassword) || initialPassword.Length < 6)
-            throw new InvalidOperationException("Initial staff password must be at least 6 characters.");
+            throw new InvalidOperationException(
+                $"Initial staff password must be at least {PasswordPolicy.MinLength} characters.");
 
         foreach (var (email, name, role, jobTitle, canApproveIntake, canRecommend, canApproveMoi, canApproveMoa) in Staff)
         {

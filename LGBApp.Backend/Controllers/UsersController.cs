@@ -98,12 +98,17 @@ public class UsersController : ControllerBase
         if (!AuthHelper.CanManageUsers(User))
             return Forbid();
 
-        if (await _context.Users.AnyAsync(u => u.Email == request.Email))
-            return Conflict("Email is already registered.");
+        var email = PasswordPolicy.NormalizeEmail(request.Email);
+        if (!PasswordPolicy.IsValidEmail(email))
+            return BadRequest(new { message = "A valid email address is required." });
+        if (!PasswordPolicy.MeetsMinLength(request.Password))
+            return BadRequest(new { message = $"Password must be at least {PasswordPolicy.MinLength} characters." });
+        if (await _context.Users.AnyAsync(u => u.Email.ToLower() == email))
+            return Conflict(new { message = "Email is already registered." });
 
         var role = string.IsNullOrWhiteSpace(request.Role) ? UserRoles.User : request.Role;
         if (!UserRoles.IsValid(role))
-            return BadRequest($"Invalid role. Use: {string.Join(", ", UserRoles.All)}");
+            return BadRequest(new { message = $"Invalid role. Use: {string.Join(", ", UserRoles.All)}" });
 
         var allowed = AuthHelper.CreatableRoles(User);
         if (!allowed.Contains(role, StringComparer.OrdinalIgnoreCase))
@@ -117,7 +122,7 @@ public class UsersController : ControllerBase
 
         var user = new User
         {
-            Email = request.Email,
+            Email = email,
             PasswordHash = PasswordHasher.Hash(request.Password),
             Name = request.Name,
             Mobile = request.Mobile,
@@ -158,13 +163,16 @@ public class UsersController : ControllerBase
         if (!AuthHelper.CanManageUser(User, user))
             return Forbid();
 
+        var email = PasswordPolicy.NormalizeEmail(request.Email);
+        if (!PasswordPolicy.IsValidEmail(email))
+            return BadRequest(new { message = "A valid email address is required." });
         var emailTaken = await _context.Users
-            .AnyAsync(u => u.Email == request.Email && u.UserId != id);
+            .AnyAsync(u => u.Email.ToLower() == email && u.UserId != id);
         if (emailTaken)
-            return Conflict("Email is already in use.");
+            return Conflict(new { message = "Email is already in use." });
 
         if (!UserRoles.IsValid(request.Role))
-            return BadRequest($"Invalid role. Use: {string.Join(", ", UserRoles.All)}");
+            return BadRequest(new { message = $"Invalid role. Use: {string.Join(", ", UserRoles.All)}" });
 
         var allowed = AuthHelper.CreatableRoles(User);
         if (!allowed.Contains(request.Role, StringComparer.OrdinalIgnoreCase))
@@ -175,7 +183,7 @@ public class UsersController : ControllerBase
             return BadRequest(new { message = "External roles require a customer." });
 
         user.Name = request.Name;
-        user.Email = request.Email;
+        user.Email = email;
         user.Mobile = request.Mobile;
         user.Role = request.Role;
         user.JobTitle = UserRoles.IsExternalRole(request.Role) ? string.Empty : (request.JobTitle ?? string.Empty);

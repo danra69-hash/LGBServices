@@ -44,11 +44,11 @@ public static class JobRequestMapper
             job.TaskType = request.TaskType;
         job.UsedQty = request.UsedQty;
         job.TotalQty = request.TotalQty;
-        job.DateRequested = DateTime.TryParse(request.DateRequested, out var dr) ? dr : job.DateRequested;
+        job.DateRequested = DateOnlyHelper.Parse(request.DateRequested) ?? job.DateRequested;
         job.ScheduledDate = DateOnlyHelper.Parse(request.ScheduledDate);
         job.DateCompleted = string.IsNullOrWhiteSpace(request.DateCompleted)
             ? null
-            : DateTime.TryParse(request.DateCompleted, out var dc) ? dc : null;
+            : DateOnlyHelper.Parse(request.DateCompleted);
         job.AccountHolder = request.AccountHolder;
         job.Status = request.Status;
         job.AssignmentComments = request.AssignmentComments;

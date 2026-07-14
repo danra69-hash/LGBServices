@@ -85,6 +85,9 @@ namespace LGBApp.Backend.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<int?>("JobRequestId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Service")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -102,6 +105,8 @@ namespace LGBApp.Backend.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("JobRequestId");
 
                     b.ToTable("CompletedServices");
                 });

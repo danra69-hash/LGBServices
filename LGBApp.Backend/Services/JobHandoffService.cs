@@ -492,6 +492,7 @@ public static class JobHandoffService
         {
             context.CompletedServices.Add(new CompletedService
             {
+                JobRequestId = job.JobRequestId,
                 Customer = job.Customer,
                 Service = job.Service,
                 UsedQty = job.UsedQty,

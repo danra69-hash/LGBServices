@@ -165,8 +165,15 @@ public static class JobRequestUnitService
 
     public static async Task RemoveLatestCompletedServiceRecordAsync(AppDbContext context, JobRequest job)
     {
+        // Prefer JobRequestId (S3); fall back to legacy string match for old rows.
         var recorded = await context.CompletedServices
-            .Where(c => c.Customer == job.Customer
+            .Where(c => c.JobRequestId == job.JobRequestId && c.Status == "Completed")
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefaultAsync();
+
+        recorded ??= await context.CompletedServices
+            .Where(c => c.JobRequestId == null
+                && c.Customer == job.Customer
                 && c.Service == job.Service
                 && c.AccountHolder == job.AccountHolder
                 && c.Status == "Completed")
