@@ -38,7 +38,7 @@ public class WorkflowInstancesController : ControllerBase
         if (instance == null) return NotFound("No active workflow.");
 
         var step = await WorkflowService.GetCurrentStepAsync(_context, instance);
-        if (step == null) return BadRequest("No active step.");
+        if (step == null) return BadRequest(new { message = "No active step." });
 
         var form = await _context.MOAForms.FindAsync(moaFormId);
         var customer = form != null

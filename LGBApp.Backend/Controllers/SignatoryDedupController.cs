@@ -30,7 +30,7 @@ public class SignatoryDedupController : ControllerBase
     public async Task<ActionResult<SignatoryLinkResultDto>> LinkByEmail([FromBody] LinkSignatoryRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
-            return BadRequest("Email is required.");
+            return BadRequest(new { message = "Email is required." });
 
         try
         {

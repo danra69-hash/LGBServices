@@ -393,18 +393,18 @@ public class JobRequestsController : ControllerBase
 
                 var submitUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
                 if (job.TotalQty > 1 && !submitUnitNumber.HasValue)
-                    return BadRequest("unitNumber is required for multi-session MOA submission.");
+                    return BadRequest(new { message = "unitNumber is required for multi-session MOA submission." });
 
                 var moaForSubmit = await ResolveMoaFormForHandoffAsync(job, submitUnitNumber);
                 if (moaForSubmit == null)
-                    return BadRequest("Save the MOA draft before submitting for admin approval.");
+                    return BadRequest(new { message = "Save the MOA draft before submitting for admin approval." });
 
                 var submitUnit = JobHandoffResolver.ResolveUnit(job, submitUnitNumber, moaForSubmit);
                 MOIForm? linkedMoi = moaForSubmit.MOIFormId.HasValue
                     ? await _context.MOIForms.FindAsync(moaForSubmit.MOIFormId.Value)
                     : null;
                 if (!JobHandoffResolver.IsMoaDraftSubmittable(job, submitUnit, moaForSubmit, linkedMoi))
-                    return BadRequest("MOA draft can only be submitted while preparation is in progress.");
+                    return BadRequest(new { message = "MOA draft can only be submitted while preparation is in progress." });
 
                 var (submitValid, submitErrors) = MoaPackChecklistService.Validate(moaForSubmit);
                 if (!submitValid)
@@ -418,11 +418,11 @@ public class JobRequestsController : ControllerBase
                 if (!AuthHelper.CanApproveMoa(User)) return Forbid();
                 var approveUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
                 if (job.TotalQty > 1 && !approveUnitNumber.HasValue)
-                    return BadRequest("unitNumber is required for multi-session MOA approval.");
+                    return BadRequest(new { message = "unitNumber is required for multi-session MOA approval." });
 
                 var moaForm = await ResolveMoaFormForHandoffAsync(job, approveUnitNumber);
                 if (moaForm == null)
-                    return BadRequest("No MOA form found for this task.");
+                    return BadRequest(new { message = "No MOA form found for this task." });
 
                 var (packValid, packErrors) = MoaPackChecklistService.Validate(moaForm);
                 if (!packValid)
@@ -438,7 +438,7 @@ public class JobRequestsController : ControllerBase
                     return Forbid();
                 var releaseUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
                 if (job.TotalQty > 1 && !releaseUnitNumber.HasValue)
-                    return BadRequest("unitNumber is required for multi-session MOA release.");
+                    return BadRequest(new { message = "unitNumber is required for multi-session MOA release." });
 
                 var moaForRelease = await ResolveMoaFormForHandoffAsync(job, releaseUnitNumber);
                 var releaseUnit = JobHandoffResolver.ResolveUnit(job, releaseUnitNumber, moaForRelease);
@@ -452,27 +452,27 @@ public class JobRequestsController : ControllerBase
                     return Forbid();
                 var rejectUnitNumber = await ResolveMoaHandoffUnitNumberAsync(job, request.UnitNumber);
                 if (job.TotalQty > 1 && !rejectUnitNumber.HasValue)
-                    return BadRequest("unitNumber is required for multi-session MOA rejection.");
+                    return BadRequest(new { message = "unitNumber is required for multi-session MOA rejection." });
 
                 var moaToReject = await ResolveMoaFormForHandoffAsync(job, rejectUnitNumber);
                 if (moaToReject == null)
-                    return BadRequest("No MOA form found for this task.");
+                    return BadRequest(new { message = "No MOA form found for this task." });
 
                 var rejectUnit = JobHandoffResolver.ResolveUnit(job, rejectUnitNumber, moaToReject);
                 var rejectHandoff = JobHandoffResolver.ResolveEffectiveHandoff(job, rejectUnit, moaToReject);
                 if (rejectHandoff != JobHandoffStatuses.AdminReview)
-                    return BadRequest("MOA can only be rejected by Sharon while awaiting head secretary review.");
+                    return BadRequest(new { message = "MOA can only be rejected by Sharon while awaiting head secretary review." });
 
                 var rejectUser = await _context.Users.FindAsync(AuthHelper.CurrentUserId(User) ?? 0);
                 if (rejectUser == null) return Unauthorized();
                 if (string.IsNullOrWhiteSpace(request.Comments))
-                    return BadRequest("A rejection reason is required.");
+                    return BadRequest(new { message = "A rejection reason is required." });
                 await JobHandoffService.OnMoaSharonRejectedAsync(
                     _context, job, moaToReject, rejectUser, request.Comments!, rejectUnit);
                 break;
             }
             default:
-                return BadRequest("Unknown handoff action.");
+                return BadRequest(new { message = "Unknown handoff action." });
         }
 
         if (!string.IsNullOrWhiteSpace(request.Comments))

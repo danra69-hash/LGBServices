@@ -29,7 +29,7 @@ public class ClientJobsController : ControllerBase
             ? null
             : AuthHelper.GetAccessibleCustomerIds(User).ToList();
         if (!AuthHelper.IsAdmin(User) && (accessibleCustomerIds?.Count ?? 0) == 0)
-            return BadRequest("External users must be linked to a customer.");
+            return BadRequest(new { message = "External users must be linked to a customer." });
 
         var query = _context.JobRequests
             .Include(j => j.Units).ThenInclude(u => u.Assignees).ThenInclude(a => a.User)
@@ -78,7 +78,7 @@ public class ClientJobsController : ControllerBase
             ? AuthHelper.CurrentCustomerId(User)
             : AuthHelper.CurrentCustomerId(User) ?? request.CustomerId;
         if (!customerId.HasValue)
-            return BadRequest("Customer is required (link user to customer or pass customerId).");
+            return BadRequest(new { message = "Customer is required (link user to customer or pass customerId)." });
 
         var customer = await _context.Customers
             .Include(c => c.AccountHolders)

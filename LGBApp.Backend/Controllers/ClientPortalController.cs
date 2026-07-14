@@ -23,7 +23,7 @@ public class ClientPortalController : ControllerBase
     {
         var customerId = AuthHelper.CurrentCustomerId(User);
         if (!customerId.HasValue)
-            return BadRequest("Your account is not linked to a customer company.");
+            return BadRequest(new { message = "Your account is not linked to a customer company." });
 
         var customer = await _context.Customers
             .Include(c => c.AccountHolders)
@@ -41,7 +41,7 @@ public class ClientPortalController : ControllerBase
     {
         var customerId = AuthHelper.CurrentCustomerId(User);
         if (!customerId.HasValue)
-            return BadRequest("Your account is not linked to a customer company.");
+            return BadRequest(new { message = "Your account is not linked to a customer company." });
 
         var companyName = await _context.Customers
             .Where(c => c.CustomerId == customerId)
@@ -89,11 +89,11 @@ public class ClientPortalController : ControllerBase
     {
         var customerId = AuthHelper.CurrentCustomerId(User);
         if (!customerId.HasValue)
-            return BadRequest("Your account is not linked to a customer company.");
+            return BadRequest(new { message = "Your account is not linked to a customer company." });
 
         var mode = request.MoiApprovalMode?.Trim() ?? MoiApprovalModes.AllRequired;
         if (mode is not (MoiApprovalModes.AllRequired or MoiApprovalModes.AnyOne))
-            return BadRequest("moiApprovalMode must be AllRequired or AnyOne.");
+            return BadRequest(new { message = "moiApprovalMode must be AllRequired or AnyOne." });
 
         var customer = await _context.Customers
             .Include(c => c.AccountHolders)

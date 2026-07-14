@@ -110,6 +110,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddProblemDetails();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -279,6 +280,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseLgbExceptionHandler();
 app.UseCors("AppCors");
 app.UseRateLimiter();
 // Behind Railway/Render/etc. TLS terminates at the proxy — skip redirect there.

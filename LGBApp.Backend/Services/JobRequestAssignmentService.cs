@@ -43,18 +43,18 @@ public static class JobRequestAssignmentService
             .Include(j => j.Units).ThenInclude(u => u.Assignees)
             .FirstOrDefaultAsync(j => j.JobRequestId == jobId);
         if (job == null)
-            throw new InvalidOperationException("Job not found.");
+            throw new DomainException("Job not found.", StatusCodes.Status404NotFound);
 
         var moiForm = job.TaskType is "MOI" or "Service"
             ? await context.MOIForms.FirstOrDefaultAsync(f => f.JobRequestId == job.JobRequestId)
             : await MoiFormPairingService.FindMoiFormForCustomerAsync(context, job.CustomerId ?? 0);
 
         if (!SecretarialStaffService.IsReadyForSecretarialAssignment(job, moiForm))
-            throw new InvalidOperationException("MOI must be signed off before assigning the secretarial team.");
+            throw new DomainException("MOI must be signed off before assigning the secretarial team.");
 
         var staff = await SecretarialStaffService.GetSecretarialStaffAsync(context);
         if (staff.Count == 0)
-            throw new InvalidOperationException("No secretarial staff accounts found.");
+            throw new DomainException("No secretarial staff accounts found.");
 
         var relatedJobs = await ResolveRelatedJobsForMoaPrepAsync(context, job);
 

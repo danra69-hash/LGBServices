@@ -47,7 +47,7 @@ public class BillingPartiesController : ControllerBase
     public async Task<ActionResult<BillingPartyDto>> Create(BillingPartyRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest("Name is required.");
+            return BadRequest(new { message = "Name is required." });
 
         var entity = new BillingParty
         {
@@ -70,7 +70,7 @@ public class BillingPartiesController : ControllerBase
         if (entity == null) return NotFound();
 
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest("Name is required.");
+            return BadRequest(new { message = "Name is required." });
 
         entity.Name = request.Name.Trim();
         entity.Category = NormalizeCategory(request.Category);

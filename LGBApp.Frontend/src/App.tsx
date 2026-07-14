@@ -183,57 +183,63 @@ export default function App() {
     try {
       const data = await getCustomers();
       setCustomers(data);
-    } catch {
+    } catch (err) {
       setCustomers([]);
+      showToast(err instanceof ApiError ? err.message : 'Failed to load customers.');
     }
-  }, []);
+  }, [showToast]);
 
   const loadProducts = useCallback(async () => {
     try {
       const data = await getProducts();
       setProducts([...data].sort((a, b) => (a.packagePrice ?? 0) - (b.packagePrice ?? 0)));
-    } catch {
+    } catch (err) {
       setProducts([]);
+      showToast(err instanceof ApiError ? err.message : 'Failed to load products.');
     }
-  }, []);
+  }, [showToast]);
 
   const loadMyCompany = useCallback(async () => {
     try {
       const data = await getMyCompany();
       setMyCompany(data);
-    } catch {
+    } catch (err) {
       setMyCompany(null);
+      showToast(err instanceof ApiError ? err.message : 'Failed to load company.');
     }
-  }, []);
+  }, [showToast]);
 
   const loadUsers = useCallback(async () => {
     try {
       const data = await getUsers();
       setDirectoryUsers(data);
       setApiUsers(data.map((u) => ({ id: u.userId, name: u.name })));
-    } catch {
+    } catch (err) {
       setDirectoryUsers([]);
       setApiUsers([]);
+      showToast(err instanceof ApiError ? err.message : 'Failed to load users.');
     }
-  }, []);
+  }, [showToast]);
 
   const loadInternalDirectory = useCallback(async () => {
     try {
       const data = await getInternalDirectoryUsers();
       setInternalDirectoryUsers(data.map((u) => ({ id: u.userId, name: u.name })));
-    } catch {
+    } catch (err) {
       setInternalDirectoryUsers([]);
+      showToast(err instanceof ApiError ? err.message : 'Failed to load staff directory.');
     }
-  }, []);
+  }, [showToast]);
 
   const loadMOIForms = useCallback(async () => {
     try {
       const forms = await getMOIForms();
       setSubmittedMOIForms(forms.map((f) => mapMoiFormResponseToModalState(f)));
-    } catch {
+    } catch (err) {
       setSubmittedMOIForms([]);
+      showToast(err instanceof ApiError ? err.message : 'Failed to load MOI forms.');
     }
-  }, []);
+  }, [showToast]);
 
   const userIsAdmin = isAdmin(currentUser);
   const userIsExternal = isExternalUser(currentUser);

@@ -91,7 +91,7 @@ public class MOAFormsController : ControllerBase
         {
             var moiForm = await _context.MOIForms.FindAsync(request.MoiFormId.Value);
             if (moiForm != null && moiForm.WorkflowState != "Approved")
-                return BadRequest("MOI must be approved before creating MOA.");
+                return BadRequest(new { message = "MOI must be approved before creating MOA." });
         }
 
         var templateCode = request.FormTemplateCode
@@ -204,7 +204,7 @@ public class MOAFormsController : ControllerBase
         if (form == null) return NotFound();
 
         if (!form.JobRequestId.HasValue)
-            return BadRequest("MOA must be linked to a job.");
+            return BadRequest(new { message = "MOA must be linked to a job." });
 
         var job = await _context.JobRequests
             .Include(j => j.Units).ThenInclude(u => u.Assignees)
@@ -214,10 +214,10 @@ public class MOAFormsController : ControllerBase
         var unit = JobHandoffResolver.ResolveUnit(job, null, form);
         var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, form);
         if (!JobHandoffResolver.IsMoaClientSignoffHandoff(handoff))
-            return BadRequest("MOA is not available for client sign-off.");
+            return BadRequest(new { message = "MOA is not available for client sign-off." });
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest("Customer not found.");
+        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         if (isExternal && !AuthHelper.CanAccessCustomer(User, customer.CustomerId))
             return Forbid();
@@ -228,7 +228,7 @@ public class MOAFormsController : ControllerBase
 
         var records = ClientApprovalService.ParseMoa(form);
         if (ClientApprovalService.HasSigned(records, holderName))
-            return BadRequest("You have already signed off on this MOA.");
+            return BadRequest(new { message = "You have already signed off on this MOA." });
 
         records.Add(new ClientApprovalRecord
         {
@@ -257,13 +257,13 @@ public class MOAFormsController : ControllerBase
             return Forbid();
 
         if (string.IsNullOrWhiteSpace(request.Reason))
-            return BadRequest("A rejection reason is required.");
+            return BadRequest(new { message = "A rejection reason is required." });
 
         var form = await _context.MOAForms.FindAsync(id);
         if (form == null) return NotFound();
 
         if (!form.JobRequestId.HasValue)
-            return BadRequest("MOA must be linked to a job.");
+            return BadRequest(new { message = "MOA must be linked to a job." });
 
         var job = await _context.JobRequests
             .Include(j => j.Units).ThenInclude(u => u.Assignees)
@@ -273,10 +273,10 @@ public class MOAFormsController : ControllerBase
         var unit = JobHandoffResolver.ResolveUnit(job, null, form);
         var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, form);
         if (!JobHandoffResolver.IsMoaClientSignoffHandoff(handoff))
-            return BadRequest("MOA is not available for client sign-off.");
+            return BadRequest(new { message = "MOA is not available for client sign-off." });
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest("Customer not found.");
+        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         if (!AuthHelper.CanAccessCustomer(User, customer.CustomerId))
             return Forbid();
@@ -304,7 +304,7 @@ public class MOAFormsController : ControllerBase
 
         var existing = await WorkflowService.GetWorkflowForMoaAsync(_context, id);
         if (existing != null)
-            return BadRequest("Workflow already started.");
+            return BadRequest(new { message = "Workflow already started." });
 
         MOIForm? moi = null;
         if (form.JobRequestId.HasValue)
@@ -318,14 +318,14 @@ public class MOAFormsController : ControllerBase
                 var unit = JobHandoffResolver.ResolveUnit(job, null, form);
                 var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, form);
                 if (!IsMoaRoutingStartAllowed(handoff, moi))
-                    return BadRequest("Internal MOA routing can only start while the MOA is being prepared.");
+                    return BadRequest(new { message = "Internal MOA routing can only start while the MOA is being prepared." });
 
                 if (moi != null && moi.WorkflowState is
                     MoiWorkflowStates.Draft
                     or MoiWorkflowStates.PendingClientMoiApproval
                     or MoiWorkflowStates.PendingAdminIntake
                     or MoiWorkflowStates.MoiRejected)
-                    return BadRequest("MOI must pass client intake before starting MOA internal routing.");
+                    return BadRequest(new { message = "MOI must pass client intake before starting MOA internal routing." });
             }
         }
 

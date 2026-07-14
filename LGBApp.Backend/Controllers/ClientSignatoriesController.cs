@@ -22,7 +22,7 @@ public class ClientSignatoriesController : ControllerBase
     {
         var customerId = AuthHelper.CurrentCustomerId(User);
         if (!customerId.HasValue)
-            return BadRequest("Your account is not linked to a customer.");
+            return BadRequest(new { message = "Your account is not linked to a customer." });
 
         var holders = await _context.AccountHolders
             .Where(h => h.CustomerId == customerId)
@@ -36,11 +36,11 @@ public class ClientSignatoriesController : ControllerBase
     public async Task<ActionResult<AccountHolderDto>> AddSignatory(AddClientSignatoryRequest request)
     {
         if (!request.Moi && !request.MoiApproval && !request.Moa)
-            return BadRequest("Select at least one of MOI, MOI Approval, or MOA.");
+            return BadRequest(new { message = "Select at least one of MOI, MOI Approval, or MOA." });
 
         var customerId = AuthHelper.CurrentCustomerId(User);
         if (!customerId.HasValue)
-            return BadRequest("Your account is not linked to a customer.");
+            return BadRequest(new { message = "Your account is not linked to a customer." });
 
         var customer = await _context.Customers
             .Include(c => c.AccountHolders)

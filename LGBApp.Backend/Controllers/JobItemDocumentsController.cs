@@ -81,7 +81,7 @@ public class JobItemDocumentsController : ControllerBase
         IFormFile file)
     {
         if (file == null || file.Length == 0)
-            return BadRequest("File is required.");
+            return BadRequest(new { message = "File is required." });
 
         var job = await LoadJobAsync(jobId);
         if (job == null) return NotFound();
@@ -89,7 +89,7 @@ public class JobItemDocumentsController : ControllerBase
             return Forbid();
 
         if (job.TotalQty > 1 && !unitNumber.HasValue)
-            return BadRequest("unitNumber is required for multi-session items.");
+            return BadRequest(new { message = "unitNumber is required for multi-session items." });
 
         var moi = await ResolveMoiForJobAsync(job, unitNumber);
         var normalizedFolder = NormalizeFolder(folder);
@@ -104,7 +104,7 @@ public class JobItemDocumentsController : ControllerBase
             unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
 
         if (unit == null && job.TotalQty > 1)
-            return BadRequest("Session not found for this item.");
+            return BadRequest(new { message = "Session not found for this item." });
 
         var doc = new JobItemDocument
         {

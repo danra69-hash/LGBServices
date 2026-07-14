@@ -90,9 +90,9 @@ public class AuthController : ControllerBase
         {
             await _passwordReset.RequestOtpAsync(request.Email ?? string.Empty);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("wait a minute", StringComparison.OrdinalIgnoreCase))
+        catch (DomainException)
         {
-            return BadRequest(ex.Message);
+            throw; // rate-limit / domain errors → global handler (429/400)
         }
         catch (Exception)
         {
@@ -111,22 +111,16 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<MessageResponse>> ResetPassword(ResetPasswordWithOtpRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
-            return BadRequest("New password must be at least 6 characters.");
+            return BadRequest(new { message = "New password must be at least 6 characters." });
 
         if (request.NewPassword != request.ConfirmPassword)
-            return BadRequest("New password and confirmation do not match.");
+            return BadRequest(new { message = "New password and confirmation do not match." });
 
-        try
-        {
-            await _passwordReset.ResetPasswordAsync(
-                request.Email ?? string.Empty,
-                request.Code ?? string.Empty,
-                request.NewPassword);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(ex.Message);
-        }
+        // DomainException (invalid code / attempts) bubbles to the global handler
+        await _passwordReset.ResetPasswordAsync(
+            request.Email ?? string.Empty,
+            request.Code ?? string.Empty,
+            request.NewPassword);
 
         return Ok(new MessageResponse
         {
@@ -139,10 +133,10 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<AuthResponse>> ChangePassword(ChangePasswordRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
-            return BadRequest("New password must be at least 6 characters.");
+            return BadRequest(new { message = "New password must be at least 6 characters." });
 
         if (request.NewPassword != request.ConfirmPassword)
-            return BadRequest("New password and confirmation do not match.");
+            return BadRequest(new { message = "New password and confirmation do not match." });
 
         var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!int.TryParse(userIdClaim, out var userId))
@@ -156,10 +150,10 @@ public class AuthController : ControllerBase
             return NotFound();
 
         if (!PasswordHasher.Verify(request.CurrentPassword, user.PasswordHash))
-            return BadRequest("Current password is incorrect.");
+            return BadRequest(new { message = "Current password is incorrect." });
 
         if (PasswordHasher.Verify(request.NewPassword, user.PasswordHash))
-            return BadRequest("New password must be different from the current password.");
+            return BadRequest(new { message = "New password must be different from the current password." });
 
         user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
         user.MustChangePassword = false;

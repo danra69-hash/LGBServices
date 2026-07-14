@@ -45,7 +45,7 @@ public class PasswordResetService
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync();
         if (latest != null && latest.CreatedAt > DateTime.UtcNow - ResendCooldown)
-            throw new InvalidOperationException("Please wait a minute before requesting another code.");
+            throw new DomainException("Please wait a minute before requesting another code.", StatusCodes.Status429TooManyRequests);
 
         // Invalidate prior active codes
         var active = await _context.PasswordResetOtps
@@ -88,7 +88,7 @@ public class PasswordResetService
         var user = await _context.Users
             .FirstOrDefaultAsync(u => u.Email.ToLower() == normalized);
         if (user == null)
-            throw new InvalidOperationException("Invalid or expired reset code.");
+            throw new DomainException("Invalid or expired reset code.");
 
         var otp = await _context.PasswordResetOtps
             .Where(o => o.Email == normalized && o.ConsumedAt == null)
@@ -96,20 +96,20 @@ public class PasswordResetService
             .FirstOrDefaultAsync();
 
         if (otp == null || otp.ExpiresAt < DateTime.UtcNow)
-            throw new InvalidOperationException("Invalid or expired reset code.");
+            throw new DomainException("Invalid or expired reset code.");
 
         if (otp.AttemptCount >= MaxVerifyAttempts)
-            throw new InvalidOperationException("Too many attempts. Request a new code.");
+            throw new DomainException("Too many attempts. Request a new code.", StatusCodes.Status429TooManyRequests);
 
         otp.AttemptCount += 1;
         if (!SecureEquals(otp.CodeHash, HashCode(codeDigits)))
         {
             await _context.SaveChangesAsync();
-            throw new InvalidOperationException("Invalid or expired reset code.");
+            throw new DomainException("Invalid or expired reset code.");
         }
 
         if (newPassword.Length < 6)
-            throw new InvalidOperationException("New password must be at least 6 characters.");
+            throw new DomainException("New password must be at least 6 characters.");
 
         user.PasswordHash = PasswordHasher.Hash(newPassword);
         user.MustChangePassword = false;

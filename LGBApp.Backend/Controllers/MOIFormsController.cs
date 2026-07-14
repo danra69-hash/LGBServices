@@ -184,7 +184,7 @@ public class MOIFormsController : ControllerBase
                 form.WorkflowState = MoiWorkflowStates.Draft;
 
             if (form.WorkflowState is not (MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected))
-                return BadRequest("MOI can only be edited while in Draft or after rejection.");
+                return BadRequest(new { message = "MOI can only be edited while in Draft or after rejection." });
 
             if (form.JobRequestId.HasValue)
             {
@@ -272,10 +272,10 @@ public class MOIFormsController : ControllerBase
         if (form == null) return NotFound();
 
         if (form.WorkflowState is not (MoiWorkflowStates.Draft or MoiWorkflowStates.MoiRejected))
-            return BadRequest("MOI can only be submitted for approval from Draft or after rejection.");
+            return BadRequest(new { message = "MOI can only be submitted for approval from Draft or after rejection." });
 
         if (!form.JobRequestId.HasValue)
-            return BadRequest("MOI must be linked to a job.");
+            return BadRequest(new { message = "MOI must be linked to a job." });
 
         var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
         if (job == null) return NotFound();
@@ -298,11 +298,11 @@ public class MOIFormsController : ControllerBase
                     d.JobRequestUnitId == form.JobRequestUnitId || d.JobRequestUnitId == null);
 
             if (!await docQuery.AnyAsync())
-                return BadRequest("Attach at least one supporting document before submitting for approval.");
+                return BadRequest(new { message = "Attach at least one supporting document before submitting for approval." });
         }
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest("Customer not found.");
+        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         await JobHandoffService.OnMoiSubmittedForApprovalAsync(_context, job, form, customer, _notifier);
         return FormMapper.ToMoiResponse(form, customer: customer);
@@ -321,10 +321,10 @@ public class MOIFormsController : ControllerBase
         if (form == null) return NotFound();
 
         if (form.WorkflowState != MoiWorkflowStates.PendingClientMoiApproval)
-            return BadRequest("MOI is not awaiting client approval.");
+            return BadRequest(new { message = "MOI is not awaiting client approval." });
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest("Customer not found.");
+        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         var holder = ClientApprovalService.FindMoiApprovalHolderForUser(customer, user);
         if (holder == null)
@@ -334,7 +334,7 @@ public class MOIFormsController : ControllerBase
 
         var records = ClientApprovalService.ParseMoi(form);
         if (ClientApprovalService.HasSigned(records, holderName))
-            return BadRequest("You have already approved this MOI.");
+            return BadRequest(new { message = "You have already approved this MOI." });
 
         records.Add(new ClientApprovalRecord
         {
@@ -348,7 +348,7 @@ public class MOIFormsController : ControllerBase
         ClientApprovalService.SaveMoi(form, records);
 
         if (!form.JobRequestId.HasValue)
-            return BadRequest("MOI must be linked to a job.");
+            return BadRequest(new { message = "MOI must be linked to a job." });
 
         var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
         if (job == null) return NotFound();
@@ -367,23 +367,23 @@ public class MOIFormsController : ControllerBase
             return Forbid();
 
         if (string.IsNullOrWhiteSpace(request.Reason))
-            return BadRequest("A rejection reason is required.");
+            return BadRequest(new { message = "A rejection reason is required." });
 
         var form = await _context.MOIForms.FindAsync(id);
         if (form == null) return NotFound();
 
         if (form.WorkflowState != MoiWorkflowStates.PendingClientMoiApproval)
-            return BadRequest("MOI is not awaiting client approval.");
+            return BadRequest(new { message = "MOI is not awaiting client approval." });
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest("Customer not found.");
+        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         var holder = ClientApprovalService.FindMoiApprovalHolderForUser(customer, user);
         if (holder == null)
             return Forbid();
 
         if (!form.JobRequestId.HasValue)
-            return BadRequest("MOI must be linked to a job.");
+            return BadRequest(new { message = "MOI must be linked to a job." });
 
         var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
         if (job == null) return NotFound();
@@ -402,10 +402,10 @@ public class MOIFormsController : ControllerBase
         if (form == null) return NotFound();
 
         if (form.WorkflowState == MoiWorkflowStates.Approved)
-            return BadRequest("MOI already approved.");
+            return BadRequest(new { message = "MOI already approved." });
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
-        if (customer == null) return BadRequest("Customer not found for company.");
+        if (customer == null) return BadRequest(new { message = "Customer not found for company." });
 
         var isAdmin = AuthHelper.IsAdmin(User);
         JobRequest? job = null;

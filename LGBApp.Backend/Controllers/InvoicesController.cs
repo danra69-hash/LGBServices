@@ -60,7 +60,7 @@ public class InvoicesController : ControllerBase
             return Forbid();
 
         var customer = await _context.Customers.FindAsync(request.CustomerId);
-        if (customer == null) return BadRequest("Customer not found.");
+        if (customer == null) return BadRequest(new { message = "Customer not found." });
 
         if (request.Amount <= 0)
             return BadRequest(new { message = "Amount must be greater than zero." });
@@ -68,7 +68,7 @@ public class InvoicesController : ControllerBase
         if (request.JobRequestId.HasValue)
         {
             var job = await _context.JobRequests.FindAsync(request.JobRequestId.Value);
-            if (job == null) return BadRequest("Job not found.");
+            if (job == null) return BadRequest(new { message = "Job not found." });
         }
 
         Invoice? invoice = null;

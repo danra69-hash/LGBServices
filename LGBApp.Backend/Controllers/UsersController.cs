@@ -111,7 +111,7 @@ public class UsersController : ControllerBase
 
         var customerId = await ResolveCustomerIdForRole(role, request.CustomerId, forceScopedCustomer: AuthHelper.IsClientAdmin(User));
         if (customerId == -1)
-            return BadRequest("External roles require a customer.");
+            return BadRequest(new { message = "External roles require a customer." });
 
         var inviterId = GetCurrentUserId();
 
@@ -172,7 +172,7 @@ public class UsersController : ControllerBase
 
         var customerId = await ResolveCustomerIdForRole(request.Role, request.CustomerId, forceScopedCustomer: AuthHelper.IsClientAdmin(User));
         if (customerId == -1)
-            return BadRequest("External roles require a customer.");
+            return BadRequest(new { message = "External roles require a customer." });
 
         user.Name = request.Name;
         user.Email = request.Email;
@@ -205,7 +205,7 @@ public class UsersController : ControllerBase
 
         var currentId = GetCurrentUserId();
         if (currentId == user.UserId)
-            return BadRequest("You cannot delete your own account.");
+            return BadRequest(new { message = "You cannot delete your own account." });
 
         _context.Users.Remove(user);
         await _context.SaveChangesAsync();
