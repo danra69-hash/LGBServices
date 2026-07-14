@@ -22,12 +22,21 @@ Jwt__Audience=LGBApp.Frontend
 Cors__AllowedOrigins__0=https://lgb-testing.vercel.app
 DISABLE_HTTPS_REDIRECTION=true
 AllowedHosts=*
+App__PublicFrontendUrl=https://lgb-testing.vercel.app
+Email__From=LGB Services <noreply@your-verified-domain.com>
+Email__ResendApiKey=<your-resend-api-key>
 ```
 
 6. **Settings → Networking → Generate Domain**  
    Copy the URL, e.g. `https://lgbtesting-production-xxxx.up.railway.app`
 
 First boot may take 1–2 minutes while it seeds the DB.
+
+### Email (forgot password OTP + MOI/MOA alerts)
+
+- Create a free [Resend](https://resend.com) account, verify a sending domain (or use `onboarding@resend.dev` only for testing to your own inbox).
+- Set `Email__ResendApiKey` and `Email__From` as above.
+- **Without** `Email__ResendApiKey`, the API still works: OTP codes and approval emails are **written to Railway logs** only (logging sink). Useful for local/dev.
 
 ## 2. Point Vercel at the API
 
@@ -47,6 +56,8 @@ VITE_API_BASE=https://YOUR-RAILWAY-URL.up.railway.app
 1. Open https://lgb-testing.vercel.app  
 2. Sign in with a seeded account (SQLite seeds staff), e.g. `sharon@lgb.test` / `password123`  
 3. You’ll be asked to change password on first login  
+4. **Forgot password:** request a code → check email (or Railway logs if Resend is unset) → reset  
+5. Push an MOI/MOA for client approval → signatory gets in-app + email notice  
 
 ## Later (real production)
 

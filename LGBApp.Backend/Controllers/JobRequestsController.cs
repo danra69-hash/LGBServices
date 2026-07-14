@@ -14,10 +14,12 @@ namespace LGBApp.Backend.Controllers;
 public class JobRequestsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly WorkflowNotifier _notifier;
 
-    public JobRequestsController(AppDbContext context)
+    public JobRequestsController(AppDbContext context, WorkflowNotifier notifier)
     {
         _context = context;
+        _notifier = notifier;
     }
 
     private IQueryable<JobRequest> JobQuery() =>
@@ -438,7 +440,7 @@ public class JobRequestsController : ControllerBase
 
                 var moaForRelease = await ResolveMoaFormForHandoffAsync(job, releaseUnitNumber);
                 var releaseUnit = JobHandoffResolver.ResolveUnit(job, releaseUnitNumber, moaForRelease);
-                await JobHandoffService.AdvanceToReadyForMoaAsync(_context, job, releaseUnit, moaForRelease);
+                await JobHandoffService.AdvanceToReadyForMoaAsync(_context, job, releaseUnit, moaForRelease, _notifier);
                 job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
                 return Ok(JobRequestMapper.ToResponse(job));
             }

@@ -32,6 +32,7 @@ public class AppDbContext : DbContext
     public DbSet<SignatoryCustomerAccess> SignatoryCustomerAccess { get; set; }
     public DbSet<AppNotification> AppNotifications { get; set; }
     public DbSet<Invoice> Invoices { get; set; }
+    public DbSet<PasswordResetOtp> PasswordResetOtps { get; set; }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<User>(entity =>
@@ -342,6 +343,14 @@ public class AppDbContext : DbContext
             entity.Property(i => i.Currency).HasMaxLength(10);
             entity.Property(i => i.Status).HasMaxLength(50);
             entity.HasIndex(i => i.InvoiceNumber).IsUnique();
+        });
+
+        modelBuilder.Entity<PasswordResetOtp>(entity =>
+        {
+            entity.HasKey(o => o.PasswordResetOtpId);
+            entity.Property(o => o.Email).HasMaxLength(256).IsRequired();
+            entity.Property(o => o.CodeHash).HasMaxLength(128).IsRequired();
+            entity.HasIndex(o => new { o.Email, o.CreatedAt });
         });
     }
 }

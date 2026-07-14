@@ -15,8 +15,13 @@ namespace LGBApp.Backend.Controllers;
 public class MOAFormsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly WorkflowNotifier _notifier;
 
-    public MOAFormsController(AppDbContext context) => _context = context;
+    public MOAFormsController(AppDbContext context, WorkflowNotifier notifier)
+    {
+        _context = context;
+        _notifier = notifier;
+    }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<FormResponse>>> GetForms([FromQuery] int? moiFormId)
@@ -236,7 +241,7 @@ public class MOAFormsController : ControllerBase
         });
         ClientApprovalService.SaveMoa(form, records);
 
-        await JobHandoffService.OnClientMoaApprovalRecordedAsync(_context, job, form, customer, unit);
+        await JobHandoffService.OnClientMoaApprovalRecordedAsync(_context, job, form, customer, unit, _notifier);
 
         var workflow = await WorkflowService.GetWorkflowForMoaAsync(_context, id);
         return FormMapper.ToMoaResponse(form, workflow, customer);

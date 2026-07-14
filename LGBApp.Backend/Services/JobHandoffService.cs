@@ -63,7 +63,8 @@ public static class JobHandoffService
         AppDbContext context,
         JobRequest job,
         MOIForm form,
-        Customer customer)
+        Customer customer,
+        WorkflowNotifier? notifier = null)
     {
         var records = ClientApprovalService.ParseMoi(form);
         if (ClientApprovalService.MoiClientPhaseComplete(customer, records))
@@ -84,19 +85,24 @@ public static class JobHandoffService
         job.Status = "In Progress";
 
         await context.SaveChangesAsync();
+        if (notifier != null)
+            await notifier.NotifyMoiPendingSignOffAsync(job, customer, form);
     }
 
     public static async Task OnClientMoiApprovalRecordedAsync(
         AppDbContext context,
         JobRequest job,
         MOIForm form,
-        Customer customer)
+        Customer customer,
+        WorkflowNotifier? notifier = null)
     {
         var records = ClientApprovalService.ParseMoi(form);
         if (!ClientApprovalService.MoiClientPhaseComplete(customer, records))
         {
             form.UpdatedAt = DateTime.UtcNow;
             await context.SaveChangesAsync();
+            if (notifier != null)
+                await notifier.NotifyRemainingMoiSignersAsync(job, customer, form);
             return;
         }
 
@@ -393,7 +399,8 @@ public static class JobHandoffService
         AppDbContext context,
         JobRequest job,
         JobRequestUnit? unit = null,
-        MOAForm? moaForm = null)
+        MOAForm? moaForm = null,
+        WorkflowNotifier? notifier = null)
     {
         var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit, moaForm);
         if (handoff != JobHandoffStatuses.MoaSharonApproved)
@@ -408,7 +415,22 @@ public static class JobHandoffService
                 .FirstOrDefaultAsync(c => c.CustomerId == job.CustomerId.Value)
             : await WorkflowService.ResolveCustomerForCompanyAsync(context, job.Customer);
         if (customer != null)
-            await WorkflowNotificationService.NotifyMoaReadyForClientAsync(context, job, customer);
+        {
+            MOIForm? pairedMoi = null;
+            if (notifier != null)
+            {
+                pairedMoi = await context.MOIForms
+                    .AsNoTracking()
+                    .Where(f => f.JobRequestId == job.JobRequestId)
+                    .OrderByDescending(f => f.MOIFormId)
+                    .FirstOrDefaultAsync();
+                await notifier.NotifyMoaReadyForClientAsync(job, customer, pairedMoi);
+            }
+            else
+            {
+                await WorkflowNotificationService.NotifyMoaReadyForClientAsync(context, job, customer);
+            }
+        }
     }
 
     public static async Task OnClientMoaApprovalRecordedAsync(
@@ -416,7 +438,8 @@ public static class JobHandoffService
         JobRequest job,
         MOAForm form,
         Customer customer,
-        JobRequestUnit? unit = null)
+        JobRequestUnit? unit = null,
+        WorkflowNotifier? notifier = null)
     {
         var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
         var records = ClientApprovalService.ParseMoa(form);
@@ -425,6 +448,15 @@ public static class JobHandoffService
             JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.MoaCirculation);
             form.UpdatedAt = DateTime.UtcNow;
             await context.SaveChangesAsync();
+            if (notifier != null)
+            {
+                var pairedMoi = await context.MOIForms
+                    .AsNoTracking()
+                    .Where(f => f.JobRequestId == job.JobRequestId)
+                    .OrderByDescending(f => f.MOIFormId)
+                    .FirstOrDefaultAsync();
+                await notifier.NotifyRemainingMoaSignersAsync(job, customer, form, pairedMoi);
+            }
             return;
         }
 

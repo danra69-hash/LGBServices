@@ -387,6 +387,23 @@ public static class SqliteSchemaMigrator
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_Invoices_InvoiceNumber"
             ON "Invoices" ("InvoiceNumber");
             """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "PasswordResetOtps" (
+                "PasswordResetOtpId" INTEGER NOT NULL CONSTRAINT "PK_PasswordResetOtps" PRIMARY KEY AUTOINCREMENT,
+                "Email" TEXT NOT NULL,
+                "CodeHash" TEXT NOT NULL,
+                "ExpiresAt" TEXT NOT NULL,
+                "ConsumedAt" TEXT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                "AttemptCount" INTEGER NOT NULL DEFAULT 0
+            );
+            """);
+
+        context.Database.ExecuteSqlRaw("""
+            CREATE INDEX IF NOT EXISTS "IX_PasswordResetOtps_Email_CreatedAt"
+            ON "PasswordResetOtps" ("Email", "CreatedAt");
+            """);
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)

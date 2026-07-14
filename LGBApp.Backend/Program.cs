@@ -3,6 +3,7 @@ using LGBApp.Backend.Data;
 using LGBApp.Backend.Middleware;
 using LGBApp.Backend.Tools;
 using LGBApp.Backend.Services;
+using LGBApp.Backend.Services.Email;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -48,6 +49,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<SignatoryAccessService>();
 builder.Services.AddScoped<SignatoryDedupService>();
+builder.Services.AddScoped<PasswordResetService>();
+builder.Services.AddScoped<WorkflowNotifier>();
+builder.Services.AddHttpClient<ResendEmailSender>();
+var resendKey = builder.Configuration["Email:ResendApiKey"];
+if (!string.IsNullOrWhiteSpace(resendKey))
+    builder.Services.AddScoped<IEmailSender>(sp => sp.GetRequiredService<ResendEmailSender>());
+else
+    builder.Services.AddScoped<IEmailSender, LoggingEmailSender>();
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Jwt:Key is not configured.");
 

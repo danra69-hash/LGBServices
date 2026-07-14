@@ -15,8 +15,13 @@ namespace LGBApp.Backend.Controllers;
 public class MOIFormsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly WorkflowNotifier _notifier;
 
-    public MOIFormsController(AppDbContext context) => _context = context;
+    public MOIFormsController(AppDbContext context, WorkflowNotifier notifier)
+    {
+        _context = context;
+        _notifier = notifier;
+    }
 
     [HttpGet]
     public async Task<ActionResult<IEnumerable<FormResponse>>> GetForms(
@@ -288,7 +293,7 @@ public class MOIFormsController : ControllerBase
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         if (customer == null) return BadRequest("Customer not found.");
 
-        await JobHandoffService.OnMoiSubmittedForApprovalAsync(_context, job, form, customer);
+        await JobHandoffService.OnMoiSubmittedForApprovalAsync(_context, job, form, customer, _notifier);
         return FormMapper.ToMoiResponse(form, customer: customer);
     }
 
@@ -337,7 +342,7 @@ public class MOIFormsController : ControllerBase
         var job = await _context.JobRequests.FindAsync(form.JobRequestId.Value);
         if (job == null) return NotFound();
 
-        await JobHandoffService.OnClientMoiApprovalRecordedAsync(_context, job, form, customer);
+        await JobHandoffService.OnClientMoiApprovalRecordedAsync(_context, job, form, customer, _notifier);
         return FormMapper.ToMoiResponse(form, customer: customer);
     }
 
