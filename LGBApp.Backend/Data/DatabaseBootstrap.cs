@@ -27,11 +27,59 @@ public static class DatabaseBootstrap
             return;
 
         StampBaselineIfLegacyDatabase(context);
-        context.Database.Migrate();
+
+        // Coexistence: SqliteSchemaMigrator (or a partially-applied EF migration) may have
+        // already created objects that the next EF migration tries to recreate. Stamp only
+        // the failing head migration, then continue so later migrations still apply.
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            try
+            {
+                context.Database.Migrate();
+                break;
+            }
+            catch (Exception ex) when (context.Database.IsSqlite() && IsAlreadyExistsError(ex))
+            {
+                var head = context.Database.GetPendingMigrations().FirstOrDefault();
+                if (head == null)
+                    throw;
+
+                Console.WriteLine(
+                    $"[Startup] EF Migrate hit already-applied SQLite object while applying '{head}' — stamping it and retrying. "
+                    + ex.Message);
+                StampMigration(context, head);
+            }
+        }
 
         // Coexistence: keep hand migrator until the next release after EF history is live.
         if (runSqliteHandMigrator && context.Database.IsSqlite())
             SqliteSchemaMigrator.Apply(context);
+    }
+
+    private static bool IsAlreadyExistsError(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException!)
+        {
+            var msg = e.Message ?? string.Empty;
+            if (msg.Contains("already exists", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void StampMigration(AppDbContext context, string migrationId)
+    {
+        var history = context.GetService<IHistoryRepository>();
+        if (!history.Exists())
+            context.Database.ExecuteSqlRaw(history.GetCreateScript());
+
+        if (history.GetAppliedMigrations().Any(h => h.MigrationId == migrationId))
+            return;
+
+        context.Database.ExecuteSqlRaw(
+            history.GetInsertScript(new HistoryRow(migrationId, EfProductVersion)));
     }
 
     private static void StampBaselineIfLegacyDatabase(AppDbContext context)
