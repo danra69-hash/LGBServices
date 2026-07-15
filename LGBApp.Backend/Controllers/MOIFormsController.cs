@@ -359,10 +359,13 @@ public class MOIFormsController : ControllerBase
         if (holder == null)
             return Forbid();
 
+        var signatureError = SignaturePolicy.ValidateRequired(request.SignatureDataUrl, request.SignatureFileName);
+        if (signatureError != null) return signatureError;
+
         var holderName = holder.Name.Trim();
 
         var records = ClientApprovalService.ParseMoi(form);
-        if (ClientApprovalService.HasSigned(records, holderName))
+        if (ClientApprovalService.HasSigned(records, holder))
             return BadRequest(new { message = "You have already approved this MOI." });
 
         records.Add(new ClientApprovalRecord

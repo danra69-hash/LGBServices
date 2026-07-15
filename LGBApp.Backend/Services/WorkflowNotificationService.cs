@@ -77,6 +77,27 @@ public static class WorkflowNotificationService
             job.CustomerId);
     }
 
+    /// <summary>D1: client skipped MOI/MOA — alert Sharon / intake approvers with their note.</summary>
+    public static async Task NotifyAdminBypassAsync(AppDbContext context, JobRequest job, string note)
+    {
+        var intakeUserIds = await context.Users
+            .AsNoTracking()
+            .Where(u => u.CanApproveMoiIntake || u.Role == UserRoles.Admin)
+            .Select(u => u.UserId)
+            .Distinct()
+            .ToListAsync();
+
+        var preview = note.Length > 160 ? note[..160] + "…" : note;
+        await NotifyUsersAsync(
+            context,
+            intakeUserIds,
+            "admin_bypass",
+            "Client request (no MOI/MOA)",
+            $"{job.Customer} — {job.Service}: {preview}",
+            job.JobRequestId,
+            job.CustomerId);
+    }
+
     public static async Task NotifyIntakeApprovedAsync(AppDbContext context, JobRequest job)
     {
         var assigneeIds = await GetJobAssigneeUserIdsAsync(context, job);

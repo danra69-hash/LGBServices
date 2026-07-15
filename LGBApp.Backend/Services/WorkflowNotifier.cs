@@ -51,16 +51,12 @@ public class WorkflowNotifier
 
     public async Task NotifyRemainingMoiSignersAsync(JobRequest job, Customer customer, MOIForm form)
     {
-        var required = ClientApprovalService.GetRequiredMoiApproverNames(customer);
+        var required = ClientApprovalService.GetRequiredMoiApprovalHolders(customer);
         var records = ClientApprovalService.ParseMoi(form);
-        var pendingNames = ClientApprovalService.PendingApprovers(required, records);
-        if (pendingNames.Count == 0) return;
+        var pendingHolders = required.Where(h => !ClientApprovalService.HasSigned(records, h)).ToList();
+        if (pendingHolders.Count == 0) return;
 
-        var holders = customer.AccountHolders
-            .Where(h => h.NeedsMoiApproval
-                && pendingNames.Any(n => n.Equals(h.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-        var userIds = await ResolveUserIdsAsync(holders, customer.CustomerId);
+        var userIds = await ResolveUserIdsAsync(pendingHolders, customer.CustomerId);
         var title = DisplayTitle(job, form);
         var message = $"{job.Customer} — {title} is still awaiting your MOI signature.";
 
@@ -112,16 +108,12 @@ public class WorkflowNotifier
 
     public async Task NotifyRemainingMoaSignersAsync(JobRequest job, Customer customer, MOAForm form, MOIForm? pairedMoi = null)
     {
-        var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
+        var required = ClientApprovalService.GetRequiredMoaHolders(customer);
         var records = ClientApprovalService.ParseMoa(form);
-        var pendingNames = ClientApprovalService.PendingApprovers(required, records);
-        if (pendingNames.Count == 0) return;
+        var pendingHolders = required.Where(h => !ClientApprovalService.HasSigned(records, h)).ToList();
+        if (pendingHolders.Count == 0) return;
 
-        var holders = customer.AccountHolders
-            .Where(h => h.NeedsMoa
-                && pendingNames.Any(n => n.Equals(h.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-        var userIds = await ResolveUserIdsAsync(holders, customer.CustomerId);
+        var userIds = await ResolveUserIdsAsync(pendingHolders, customer.CustomerId);
         var title = DisplayTitle(job, pairedMoi);
         var message = $"{job.Customer} — {title} MOA is still awaiting your signature.";
 

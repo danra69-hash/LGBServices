@@ -360,6 +360,9 @@ public static class JobRequestUnitService
             ScheduledDate = DateOnlyHelper.Format(unit.ScheduledDate),
             Status = unit.Status,
             InternalHandoffStatus = unit.InternalHandoffStatus,
+            WorkflowMode = unit.WorkflowMode ?? string.Empty,
+            AdminBypassNote = unit.AdminBypassNote ?? string.Empty,
+            AdminBypassAt = unit.AdminBypassAt?.ToString("O"),
         };
     }
 

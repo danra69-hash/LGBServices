@@ -26,6 +26,9 @@ public static class JobRequestMapper
         Status = job.Status,
         InternalHandoffStatus = job.InternalHandoffStatus,
         AssignmentComments = job.AssignmentComments,
+        WorkflowMode = job.WorkflowMode ?? string.Empty,
+        AdminBypassNote = job.AdminBypassNote ?? string.Empty,
+        AdminBypassAt = job.AdminBypassAt?.ToString("O"),
         Units = job.Units
             .OrderBy(u => u.UnitNumber)
             .Select(JobRequestUnitService.ToDto)

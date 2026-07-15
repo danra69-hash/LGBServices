@@ -26,5 +26,11 @@ public class JobRequest
     /// <summary>Internal operational handoff: ClientSubmitted → PendingPrep → ResoInProgress → AdminReview → ReadyForMoa → MoaCirculation → Completed</summary>
     public string InternalHandoffStatus { get; set; } = string.Empty;
     public string? AssignmentComments { get; set; }
+    /// <summary>D1: "" | MoiMoa | AdminBypass — client choice for this task.</summary>
+    public string WorkflowMode { get; set; } = string.Empty;
+    /// <summary>D1: client instructions when WorkflowMode is AdminBypass.</summary>
+    public string AdminBypassNote { get; set; } = string.Empty;
+    public DateTime? AdminBypassAt { get; set; }
+    public int? AdminBypassByUserId { get; set; }
     public ICollection<JobRequestUnit> Units { get; set; } = new List<JobRequestUnit>();
 }

@@ -10,6 +10,9 @@ public class JobRequestUnitDto
     public string? ScheduledDate { get; set; }
     public string Status { get; set; } = "Pending";
     public string InternalHandoffStatus { get; set; } = string.Empty;
+    public string WorkflowMode { get; set; } = string.Empty;
+    public string AdminBypassNote { get; set; } = string.Empty;
+    public string? AdminBypassAt { get; set; }
     public string? LinkedFormKind { get; set; }
     public int? LinkedFormId { get; set; }
     public bool HasMoiForm { get; set; }

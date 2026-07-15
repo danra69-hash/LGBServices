@@ -18,6 +18,8 @@ public static class JobHandoffStatuses
     public const string PendingExecute = "PendingExecute";
     public const string ExecutionSecComplete = "ExecutionSecComplete";
     public const string Completed = "Completed";
+    /// <summary>D1: client skipped MOI/MOA — Sharon should read AdminBypassNote and action the work.</summary>
+    public const string AdminBypass = "AdminBypass";
 
     public static readonly string[] Ordered =
     [

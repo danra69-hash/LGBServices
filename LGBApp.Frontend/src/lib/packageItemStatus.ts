@@ -4,6 +4,7 @@ export const PACKAGE_ITEM_STATUS_KEYS = {
   moiNotReceived: 'moi_not_received',
   moiRejected: 'moi_rejected',
   awaitingIntake: 'awaiting_intake',
+  adminBypass: 'admin_bypass',
   resolutionPrep: 'resolution_prep',
   pendingRecommendation: 'pending_recommendation',
   moiSignOff: 'moi_sign_off',
@@ -28,6 +29,7 @@ const LABELS: Record<string, string> = {
   [PACKAGE_ITEM_STATUS_KEYS.moiNotReceived]: 'MOI not received',
   [PACKAGE_ITEM_STATUS_KEYS.moiRejected]: 'MOI rejected',
   [PACKAGE_ITEM_STATUS_KEYS.awaitingIntake]: 'With LGB for review',
+  [PACKAGE_ITEM_STATUS_KEYS.adminBypass]: 'Client note for LGB',
   [PACKAGE_ITEM_STATUS_KEYS.resolutionPrep]: 'Resolution prep',
   [PACKAGE_ITEM_STATUS_KEYS.pendingRecommendation]: 'Pending recommendation',
   [PACKAGE_ITEM_STATUS_KEYS.moiSignOff]: 'MOI sign-off',
@@ -52,6 +54,7 @@ const BADGE_CLASSES: Record<string, string> = {
   [PACKAGE_ITEM_STATUS_KEYS.moiNotReceived]: 'bg-slate-100 text-slate-700',
   [PACKAGE_ITEM_STATUS_KEYS.moiRejected]: 'bg-red-100 text-red-800',
   [PACKAGE_ITEM_STATUS_KEYS.awaitingIntake]: 'bg-amber-100 text-amber-900',
+  [PACKAGE_ITEM_STATUS_KEYS.adminBypass]: 'bg-amber-100 text-amber-950',
   [PACKAGE_ITEM_STATUS_KEYS.resolutionPrep]: 'bg-blue-100 text-blue-800',
   [PACKAGE_ITEM_STATUS_KEYS.pendingRecommendation]: 'bg-indigo-100 text-indigo-800',
   [PACKAGE_ITEM_STATUS_KEYS.moiSignOff]: 'bg-purple-100 text-purple-800',
@@ -678,6 +681,13 @@ export function jobNeedsUserAttention(
 ): boolean {
   const unitAwaitingIntake = job.units?.some((u) => u.awaitingIntakeApproval) ?? false;
   if ((job.awaitingIntakeApproval || unitAwaitingIntake) && user.canApproveMoiIntake)
+    return true;
+  // D1: client sent work without MOI/MOA
+  if (
+    (job.internalHandoffStatus === 'AdminBypass' || job.workflowMode === 'AdminBypass'
+      || job.units?.some((u) => u.internalHandoffStatus === 'AdminBypass' || u.workflowMode === 'AdminBypass'))
+    && (user.canApproveMoiIntake || user.role === 'Admin')
+  )
     return true;
   if (jobHasMoaClientCirculation(job) && user.canApproveMoa)
     return true;

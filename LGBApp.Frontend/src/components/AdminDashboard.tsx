@@ -47,6 +47,18 @@ interface AdminDashboardProps {
 function attentionLabel(job: JobRequestResponse): string {
   if (job.awaitingIntakeApproval || job.units?.some((u) => u.awaitingIntakeApproval))
     return 'MOI submitted — review intake';
+  if (
+    job.internalHandoffStatus === 'AdminBypass'
+    || job.workflowMode === 'AdminBypass'
+    || job.units?.some((u) => u.internalHandoffStatus === 'AdminBypass')
+  ) {
+    const note = job.adminBypassNote
+      || job.units?.find((u) => u.adminBypassNote)?.adminBypassNote
+      || '';
+    return note
+      ? `Client request (no MOI/MOA): ${note.length > 80 ? `${note.slice(0, 80)}…` : note}`
+      : 'Client request (no MOI/MOA) — open to action';
+  }
   if (jobHasMoaClientCirculation(job))
     return 'Client signed MOA — awaiting remaining signatories';
   if (job.internalHandoffStatus === 'AdminReview')

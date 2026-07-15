@@ -5,6 +5,7 @@ public static class PackageItemStatuses
     public const string MoiNotReceived = "moi_not_received";
     public const string MoiRejected = "moi_rejected";
     public const string AwaitingIntake = "awaiting_intake";
+    public const string AdminBypass = "admin_bypass";
     public const string ResolutionPrep = "resolution_prep";
     public const string PendingRecommendation = "pending_recommendation";
     public const string MoiSignOff = "moi_sign_off";
@@ -32,6 +33,7 @@ public static class PackageItemStatuses
         [MoiNotReceived] = "MOI not received",
         [MoiRejected] = "MOI rejected",
         [AwaitingIntake] = "With LGB for review",
+        [AdminBypass] = "Client note for LGB",
         [ResolutionPrep] = "Resolution prep",
         [PendingRecommendation] = "Pending recommendation",
         [MoiSignOff] = "MOI sign-off",

@@ -21,6 +21,9 @@ public class JobRequestResponse
     public string Status { get; set; } = string.Empty;
     public string InternalHandoffStatus { get; set; } = string.Empty;
     public string? AssignmentComments { get; set; }
+    public string WorkflowMode { get; set; } = string.Empty;
+    public string AdminBypassNote { get; set; } = string.Empty;
+    public string? AdminBypassAt { get; set; }
     public List<JobRequestUnitDto> Units { get; set; } = [];
     public string? LinkedFormKind { get; set; }
     public int? LinkedFormId { get; set; }

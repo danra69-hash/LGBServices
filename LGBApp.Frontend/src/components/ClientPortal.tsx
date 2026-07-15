@@ -3,6 +3,7 @@ import { FileText, Plus } from 'lucide-react';
 import { ClientCompanyWorkbench } from './ClientCompanyWorkbench';
 import {
   ApiError,
+  chooseJobWorkflow,
   getClientJobs,
   getClientPortalSummary,
   getMOIForms,
@@ -86,6 +87,12 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
     documentTitle: '',
     adHoc: false,
   });
+  const [workflowChoice, setWorkflowChoice] = useState<{
+    job: JobRequestResponse;
+    unit: JobRequestUnitDto;
+  } | null>(null);
+  const [bypassNote, setBypassNote] = useState('');
+  const [savingChoice, setSavingChoice] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,12 +125,18 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
     void load();
   }, [load, refreshKey]);
 
+  const unitWorkflowMode = (job: JobRequestResponse, unit: JobRequestUnitDto) =>
+    unit.workflowMode || job.workflowMode || '';
+
   const moiActionLabel = (job: JobRequestResponse, unit: JobRequestUnitDto) => {
+    if (unitWorkflowMode(job, unit) === 'AdminBypass') return 'Sent to LGB';
     if (isMoiRejected(job, unit)) return 'Revise MOI';
     if (isSignatoryView && signatoryCanSignMoi(job, currentUser, unit)) return 'Sign MOI';
     const moiState = unit.moiWorkflowState ?? job.moiWorkflowState ?? '';
     if (unitHasMoiForm(job, unit) && moiState === 'Draft') return 'Continue MOI';
-    if (canClientStartMoi(job, unit) && (!isSignatoryView || canSignatoryStartMoi(job, currentUser, unit))) return 'Start MOI';
+    if (canClientStartMoi(job, unit) && (!isSignatoryView || canSignatoryStartMoi(job, currentUser, unit))) {
+      return unitWorkflowMode(job, unit) === 'MoiMoa' ? 'Start MOI' : 'Start / choose path';
+    }
     return 'View MOI';
   };
 
@@ -134,27 +147,129 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
     return 'View MOA';
   };
 
-  const showMoiAction = (job: JobRequestResponse, unit: JobRequestUnitDto) =>
-    canClientViewMoi(job, unit)
-    || canClientStartMoi(job, unit)
-    || (isSignatoryView && signatoryCanSignMoi(job, currentUser, unit))
-    || (isSignatoryView && canSignatoryStartMoi(job, currentUser, unit) && canClientStartMoi(job, unit));
+  const showMoiAction = (job: JobRequestResponse, unit: JobRequestUnitDto) => {
+    if (unitWorkflowMode(job, unit) === 'AdminBypass') return true;
+    return canClientViewMoi(job, unit)
+      || canClientStartMoi(job, unit)
+      || (isSignatoryView && signatoryCanSignMoi(job, currentUser, unit))
+      || (isSignatoryView && canSignatoryStartMoi(job, currentUser, unit) && canClientStartMoi(job, unit));
+  };
 
   const showMoaAction = (job: JobRequestResponse, unit: JobRequestUnitDto) =>
-    unitHasMoaForm(job, unit)
+    unitWorkflowMode(job, unit) !== 'AdminBypass'
+    && unitHasMoaForm(job, unit)
     && (signatoryCanSignMoa(job, currentUser, unit)
       || canClientViewMoa(job, unit)
       || (!isSignatoryView && currentUser.needsMoa && isMoaClientSignoffPhase(job, unit)));
 
+  const startMoiAfterChoice = async (job: JobRequestResponse, unit: JobRequestUnitDto) => {
+    const updated = await issueMoiForJob(job.id, {
+      service: job.service,
+      typeOfDocument: job.service,
+      requestedBy: currentUser.name,
+      unitNumber: unit.unitNumber,
+    });
+    await load();
+    const refreshedUnit = updated.units?.find((u) => u.unitNumber === unit.unitNumber) ?? unit;
+    onOpenMoiForm(jobForUnit(updated, refreshedUnit));
+  };
+
+  const openMoiForm = async (job: JobRequestResponse, unit: JobRequestUnitDto) => {
+    if (unitWorkflowMode(job, unit) === 'AdminBypass') {
+      setError(unit.adminBypassNote || job.adminBypassNote || 'This task was sent to LGB without MOI/MOA.');
+      return;
+    }
+    if (!canOpenJobForm(job, unit, isSignatoryView, currentUser)) return;
+    const ctx = jobForUnit(job, unit);
+    setError('');
+    try {
+      if (ctx.linkedFormId || unit.moiFormId || unitHasMoiForm(job, unit) || isMoiRejected(job, unit)) {
+        onOpenMoiForm({
+          ...ctx,
+          linkedFormId: unit.moiFormId ?? (ctx.linkedFormKind === 'MOI' ? ctx.linkedFormId : undefined),
+          linkedFormKind: 'MOI',
+          hasMoiForm: true,
+        });
+        return;
+      }
+
+      if (canClientStartMoi(job, unit) && (!isSignatoryView || canSignatoryStartMoi(job, currentUser, unit))) {
+        // D1: ask whether MOI/MOA is needed before first issue
+        if (!unitWorkflowMode(job, unit)) {
+          setBypassNote('');
+          setWorkflowChoice({ job, unit });
+          return;
+        }
+        await startMoiAfterChoice(job, unit);
+        return;
+      }
+
+      const forms = await getMOIForms(job.id, unit.unitNumber);
+      const linkedFormId = forms[0]?.id ?? unit.moiFormId ?? unit.linkedFormId;
+      if (linkedFormId) {
+        onOpenMoiForm({
+          ...ctx,
+          linkedFormId,
+          linkedFormKind: 'MOI',
+          hasMoiForm: true,
+        });
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to open MOI.');
+    }
+  };
+
+  const confirmWorkflowMoiMoa = async () => {
+    if (!workflowChoice) return;
+    setSavingChoice(true);
+    setError('');
+    try {
+      const { job, unit } = workflowChoice;
+      await chooseJobWorkflow(job.id, { mode: 'MoiMoa', unitNumber: unit.unitNumber });
+      setWorkflowChoice(null);
+      await startMoiAfterChoice(job, unit);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to start MOI path.');
+    } finally {
+      setSavingChoice(false);
+    }
+  };
+
+  const confirmWorkflowBypass = async () => {
+    if (!workflowChoice) return;
+    if (bypassNote.trim().length < 8) {
+      setError('Please describe what LGB needs to do (at least 8 characters).');
+      return;
+    }
+    setSavingChoice(true);
+    setError('');
+    try {
+      const { job, unit } = workflowChoice;
+      await chooseJobWorkflow(job.id, {
+        mode: 'AdminBypass',
+        unitNumber: unit.unitNumber,
+        note: bypassNote.trim(),
+      });
+      setWorkflowChoice(null);
+      setBypassNote('');
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to send request to LGB.');
+    } finally {
+      setSavingChoice(false);
+    }
+  };
+
   const renderFormActions = (job: JobRequestResponse, unit: JobRequestUnitDto) => {
     const ctx = jobForUnit(job, unit);
-    const actions: { key: string; label: string; onClick: () => void }[] = [];
+    const actions: { key: string; label: string; onClick: () => void; muted?: boolean }[] = [];
 
     if (showMoiAction(job, unit)) {
       actions.push({
         key: 'moi',
         label: moiActionLabel(job, unit),
         onClick: () => void openMoiForm(job, unit),
+        muted: unitWorkflowMode(job, unit) === 'AdminBypass',
       });
     }
     if (showMoaAction(job, unit)) {
@@ -174,7 +289,9 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
             key={action.key}
             type="button"
             onClick={action.onClick}
-            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+            className={`inline-flex items-center gap-1 text-sm hover:underline ${
+              action.muted ? 'text-muted-foreground' : 'text-primary'
+            }`}
           >
             <FileText className="w-3.5 h-3.5" />
             {action.label}
@@ -249,49 +366,6 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
       setError(err instanceof ApiError ? err.message : 'Failed to update MOI signing policy.');
     } finally {
       setSavingMode(false);
-    }
-  };
-
-  const openMoiForm = async (job: JobRequestResponse, unit: JobRequestUnitDto) => {
-    if (!canOpenJobForm(job, unit, isSignatoryView, currentUser)) return;
-    const ctx = jobForUnit(job, unit);
-    setError('');
-    try {
-      if (ctx.linkedFormId || unit.moiFormId || unitHasMoiForm(job, unit) || isMoiRejected(job, unit)) {
-        onOpenMoiForm({
-          ...ctx,
-          linkedFormId: unit.moiFormId ?? (ctx.linkedFormKind === 'MOI' ? ctx.linkedFormId : undefined),
-          linkedFormKind: 'MOI',
-          hasMoiForm: true,
-        });
-        return;
-      }
-
-      if (canClientStartMoi(job, unit)) {
-        const updated = await issueMoiForJob(job.id, {
-          service: job.service,
-          typeOfDocument: job.service,
-          requestedBy: currentUser.name,
-          unitNumber: unit.unitNumber,
-        });
-        await load();
-        const refreshedUnit = updated.units?.find((u) => u.unitNumber === unit.unitNumber) ?? unit;
-        onOpenMoiForm(jobForUnit(updated, refreshedUnit));
-        return;
-      }
-
-      const forms = await getMOIForms(job.id, unit.unitNumber);
-      const linkedFormId = forms[0]?.id ?? unit.moiFormId ?? unit.linkedFormId;
-      if (linkedFormId) {
-        onOpenMoiForm({
-          ...ctx,
-          linkedFormId,
-          linkedFormKind: 'MOI',
-          hasMoiForm: true,
-        });
-      }
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to open MOI.');
     }
   };
 
@@ -437,6 +511,64 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
         onMarkDone={isSignatoryView ? undefined : (job, unitNumber) => void handleMarkDone(job, unitNumber)}
         onUndo={isSignatoryView ? undefined : (job, unitNumber) => void handleUndo(job, unitNumber)}
       />
+
+      {workflowChoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-card border border-border p-5 shadow-lg space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold">How should LGB handle this?</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                {workflowChoice.job.service}
+                {(workflowChoice.job.totalQty ?? 1) > 1
+                  ? ` — session ${workflowChoice.unit.unitNumber}`
+                  : ''}
+              </p>
+            </div>
+            <p className="text-sm text-foreground/80">
+              Choose MOI/MOA when this needs the formal instruction and resolution workflow.
+              Or send a note straight to LGB if that process is not needed.
+            </p>
+            <label className="block text-sm space-y-1">
+              <span className="text-muted-foreground">Note for LGB (required for the bypass option)</span>
+              <textarea
+                className="w-full min-h-[88px] px-3 py-2 border border-border rounded-lg text-sm"
+                value={bypassNote}
+                onChange={(e) => setBypassNote(e.target.value)}
+                placeholder="e.g. Please update registered address — documents attached by email."
+              />
+            </label>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                disabled={savingChoice}
+                onClick={() => void confirmWorkflowMoiMoa()}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm disabled:opacity-50"
+              >
+                {savingChoice ? 'Working…' : 'Needs MOI / MOA'}
+              </button>
+              <button
+                type="button"
+                disabled={savingChoice}
+                onClick={() => void confirmWorkflowBypass()}
+                className="px-4 py-2 border border-border rounded-lg text-sm disabled:opacity-50"
+              >
+                No MOI/MOA — send note to LGB
+              </button>
+              <button
+                type="button"
+                disabled={savingChoice}
+                onClick={() => {
+                  setWorkflowChoice(null);
+                  setBypassNote('');
+                }}
+                className="px-4 py-2 text-sm text-muted-foreground hover:underline"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

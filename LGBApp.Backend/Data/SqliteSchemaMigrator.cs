@@ -421,6 +421,16 @@ public static class SqliteSchemaMigrator
         // N2: optimistic concurrency stamps
         EnsureColumn(context, "MOIForms", "ConcurrencyStamp", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'");
         EnsureColumn(context, "MOAForms", "ConcurrencyStamp", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'");
+
+        // D1: per-task MOI/MOA vs admin-bypass choice
+        EnsureColumn(context, "JobRequests", "WorkflowMode", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(context, "JobRequests", "AdminBypassNote", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(context, "JobRequests", "AdminBypassAt", "TEXT NULL");
+        EnsureColumn(context, "JobRequests", "AdminBypassByUserId", "INTEGER NULL");
+        EnsureColumn(context, "JobRequestUnits", "WorkflowMode", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(context, "JobRequestUnits", "AdminBypassNote", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(context, "JobRequestUnits", "AdminBypassAt", "TEXT NULL");
+        EnsureColumn(context, "JobRequestUnits", "AdminBypassByUserId", "INTEGER NULL");
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)

@@ -104,11 +104,11 @@ public static class FormMapper
 
         if (customer != null)
         {
-            var required = ClientApprovalService.GetRequiredMoiApproverNames(customer);
-            response.RequiredApprovers = required;
+            var requiredHolders = ClientApprovalService.GetRequiredMoiApprovalHolders(customer);
+            response.RequiredApprovers = requiredHolders.Select(h => h.Name.Trim()).ToList();
             response.PendingApprovers = ClientApprovalService.MoiClientPhaseComplete(customer, records)
                 ? []
-                : ClientApprovalService.PendingApprovers(required, records);
+                : ClientApprovalService.PendingApprovers(requiredHolders, records);
         }
 
         response.Rejections = FormRejectionService.ParseMoi(form)
@@ -139,9 +139,9 @@ public static class FormMapper
 
         if (customer != null)
         {
-            var required = ClientApprovalService.GetRequiredMoaApproverNames(customer);
-            response.RequiredApprovers = required;
-            response.PendingApprovers = ClientApprovalService.PendingApprovers(required, records);
+            var requiredHolders = ClientApprovalService.GetRequiredMoaHolders(customer);
+            response.RequiredApprovers = requiredHolders.Select(h => h.Name.Trim()).ToList();
+            response.PendingApprovers = ClientApprovalService.PendingApprovers(requiredHolders, records);
         }
 
         response.Rejections = FormRejectionService.ParseMoa(form)

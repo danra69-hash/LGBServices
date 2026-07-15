@@ -224,12 +224,19 @@ public class MOAFormsController : ControllerBase
         if (!JobHandoffResolver.IsMoaClientSignoffHandoff(handoff))
             return BadRequest(new { message = "MOA is not available for client sign-off." });
 
+        var holder = ClientApprovalService.FindMoaHolderForUser(customer, user);
         var holderName = ClientApprovalService.ResolveMoaSignerName(customer, user, isInternalSigner);
         if (holderName == null)
             return Forbid();
 
+        var signatureError = SignaturePolicy.ValidateRequired(request.SignatureDataUrl, request.SignatureFileName);
+        if (signatureError != null) return signatureError;
+
         var records = ClientApprovalService.ParseMoa(form);
-        if (ClientApprovalService.HasSigned(records, holderName))
+        // D4: client holders match by UserId; internal countersign by UserId only
+        if (holder != null && ClientApprovalService.HasSigned(records, holder))
+            return BadRequest(new { message = "You have already signed off on this MOA." });
+        if (holder == null && records.Any(r => r.UserId == user.UserId))
             return BadRequest(new { message = "You have already signed off on this MOA." });
 
         records.Add(new ClientApprovalRecord

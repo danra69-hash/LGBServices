@@ -188,6 +188,9 @@ export interface JobRequestUnitDto {
   displayStatusKey?: string;
   awaitingIntakeApproval?: boolean;
   documentTitle?: string;
+  workflowMode?: string;
+  adminBypassNote?: string;
+  adminBypassAt?: string;
 }
 
 export interface WorkTrackerItemDto {
@@ -252,6 +255,10 @@ export interface JobRequestResponse {
   activeUnitNumber?: number;
   /** Curated MOI document title when set — preferred list/workboard label. */
   documentTitle?: string;
+  /** D1: "" | MoiMoa | AdminBypass */
+  workflowMode?: string;
+  adminBypassNote?: string;
+  adminBypassAt?: string;
 }
 
 export interface BillingPartyDto {
@@ -1021,6 +1028,17 @@ export async function issueMoiForJob(
   return request<JobRequestResponse>(`/api/clientjobs/${jobId}/issue-moi`, {
     method: 'POST',
     body: JSON.stringify(data ?? {}),
+  });
+}
+
+/** D1: MoiMoa → continue workflow; AdminBypass → note for Sharon (no MOI/MOA). */
+export async function chooseJobWorkflow(
+  jobId: number,
+  data: { mode: 'MoiMoa' | 'AdminBypass'; unitNumber?: number; note?: string },
+): Promise<JobRequestResponse> {
+  return request<JobRequestResponse>(`/api/clientjobs/${jobId}/workflow-choice`, {
+    method: 'POST',
+    body: JSON.stringify(data),
   });
 }
 

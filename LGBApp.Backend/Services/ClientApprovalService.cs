@@ -16,16 +16,28 @@ public static class ClientApprovalService
     public static void SaveMoa(MOAForm form, List<ClientApprovalRecord> records) =>
         form.ClientApprovalsJson = JsonHelper.Serialize(records);
 
-    public static List<string> GetRequiredMoiApproverNames(Customer customer) =>
+    public static List<AccountHolder> GetRequiredMoiApprovalHolders(Customer customer) =>
         customer.AccountHolders
             .Where(h => h.NeedsMoiApproval && !string.IsNullOrWhiteSpace(h.Name))
+            .GroupBy(h => h.AccountHolderId)
+            .Select(g => g.First())
+            .ToList();
+
+    public static List<AccountHolder> GetRequiredMoaHolders(Customer customer) =>
+        customer.AccountHolders
+            .Where(h => h.NeedsMoa && !string.IsNullOrWhiteSpace(h.Name))
+            .GroupBy(h => h.AccountHolderId)
+            .Select(g => g.First())
+            .ToList();
+
+    public static List<string> GetRequiredMoiApproverNames(Customer customer) =>
+        GetRequiredMoiApprovalHolders(customer)
             .Select(h => h.Name.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
     public static List<string> GetRequiredMoaApproverNames(Customer customer) =>
-        customer.AccountHolders
-            .Where(h => h.NeedsMoa && !string.IsNullOrWhiteSpace(h.Name))
+        GetRequiredMoaHolders(customer)
             .Select(h => h.Name.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -63,36 +75,84 @@ public static class ClientApprovalService
         return null;
     }
 
+    /// <summary>
+    /// D4: prefer UserId match scoped to this customer’s holder; name fallback only when
+    /// the holder has no UserId (unprovisioned). Internal-only countersign records must
+    /// not satisfy a required client holder via display-name collision.
+    /// </summary>
+    public static bool HasSigned(List<ClientApprovalRecord> records, AccountHolder holder)
+    {
+        if (holder.UserId is int uid && uid > 0)
+            return records.Any(r => r.UserId == uid);
+
+        var name = holder.Name.Trim();
+        return records.Any(r =>
+            r.UserId == 0
+            && r.AccountHolderName.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Obsolete("Use HasSigned(records, AccountHolder) — name-only matching is unsafe.")]
     public static bool HasSigned(List<ClientApprovalRecord> records, string holderName) =>
         records.Any(r => r.AccountHolderName.Equals(holderName, StringComparison.OrdinalIgnoreCase));
 
-    public static bool AllRequiredSigned(List<string> required, List<ClientApprovalRecord> records) =>
-        required.Count == 0
-        || required.All(name => HasSigned(records, name));
+    public static bool AllRequiredSigned(IEnumerable<AccountHolder> required, List<ClientApprovalRecord> records)
+    {
+        var list = required.ToList();
+        return list.Count == 0 || list.All(h => HasSigned(records, h));
+    }
 
-    public static List<string> PendingApprovers(List<string> required, List<ClientApprovalRecord> records) =>
-        required.Where(name => !HasSigned(records, name)).ToList();
+    public static List<string> PendingApprovers(IEnumerable<AccountHolder> required, List<ClientApprovalRecord> records) =>
+        required.Where(h => !HasSigned(records, h)).Select(h => h.Name.Trim()).ToList();
+
+    // Keep name-list overloads for call sites that still pass names (delegate to holders by name on customer when possible)
+    public static List<string> PendingApprovers(List<string> requiredNames, List<ClientApprovalRecord> records) =>
+        requiredNames.Where(name => !records.Any(r =>
+            r.AccountHolderName.Equals(name, StringComparison.OrdinalIgnoreCase))).ToList();
 
     /// <summary>MOI client phase complete — mode from customer; MOA always requires all signers.</summary>
     public static bool MoiClientPhaseComplete(Customer customer, List<ClientApprovalRecord> records)
     {
-        var required = GetRequiredMoiApproverNames(customer);
+        var required = GetRequiredMoiApprovalHolders(customer);
         if (required.Count == 0)
             return true;
 
         if (string.Equals(customer.MoiApprovalMode, MoiApprovalModes.AnyOne, StringComparison.OrdinalIgnoreCase))
-        {
-            return records.Any(r => required.Any(n =>
-                n.Equals(r.AccountHolderName, StringComparison.OrdinalIgnoreCase)));
-        }
+            return required.Any(h => HasSigned(records, h));
 
         return AllRequiredSigned(required, records);
     }
 
-    /// <summary>MOA sign-off always requires every listed approver.</summary>
+    /// <summary>
+    /// MOA sign-off requires every listed client holder. Internal countersignatures
+    /// (UserId not in required client holder set) do not count toward client completion.
+    /// </summary>
     public static bool MoaClientPhaseComplete(Customer customer, List<ClientApprovalRecord> records)
     {
-        var required = GetRequiredMoaApproverNames(customer);
+        var required = GetRequiredMoaHolders(customer);
         return AllRequiredSigned(required, records);
+    }
+
+    public static bool IsValidSignature(string? signatureDataUrl, string? signatureFileName)
+    {
+        if (string.IsNullOrWhiteSpace(signatureDataUrl))
+            return false;
+
+        var url = signatureDataUrl.Trim();
+        if (!url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Drawn PNG/JPEG or attached image / PDF
+        var comma = url.IndexOf(',');
+        if (comma <= 5)
+            return false;
+
+        var meta = url[..comma].ToLowerInvariant();
+        var okMime = meta.Contains("image/png")
+            || meta.Contains("image/jpeg")
+            || meta.Contains("image/jpg")
+            || meta.Contains("image/webp")
+            || meta.Contains("application/pdf");
+
+        return okMime && url.Length > comma + 4;
     }
 }

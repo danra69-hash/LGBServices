@@ -53,6 +53,100 @@ public class ClientJobsController : ControllerBase
         return responses;
     }
 
+    /// <summary>D1: client chooses MOI/MOA workflow vs admin-bypass with a note for Sharon.</summary>
+    [HttpPost("{jobId}/workflow-choice")]
+    [Authorize(Roles = "Admin,ClientAdmin,ClientSignatory")]
+    public async Task<ActionResult<JobRequestResponse>> ChooseWorkflow(int jobId, WorkflowChoiceRequest request)
+    {
+        var job = await _context.JobRequests
+            .Include(j => j.Units).ThenInclude(u => u.Assignees).ThenInclude(a => a.User)
+            .FirstOrDefaultAsync(j => j.JobRequestId == jobId);
+        if (job == null) return NotFound();
+
+        if (!AuthHelper.IsAdmin(User)
+            && !AuthHelper.CanManageClientJob(User, job)
+            && !await AuthHelper.CanSignatoryIssueMoiAsync(_context, User, job))
+            return Forbid();
+
+        var mode = (request.Mode ?? string.Empty).Trim();
+        if (!JobWorkflowModes.IsMoiMoa(mode) && !JobWorkflowModes.IsAdminBypass(mode))
+            return BadRequest(new { message = "Mode must be MoiMoa or AdminBypass." });
+
+        await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
+        job = await _context.JobRequests
+            .Include(j => j.Units).ThenInclude(u => u.Assignees)
+            .FirstAsync(j => j.JobRequestId == jobId);
+
+        var unitNumber = request.UnitNumber ?? (job.TotalQty <= 1 ? 1 : null);
+        if (!unitNumber.HasValue)
+            return BadRequest(new { message = "Unit number is required for multi-session items." });
+
+        var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+        if (unit == null)
+            return BadRequest(new { message = "Session not found." });
+
+        var userId = AuthHelper.CurrentUserId(User);
+
+        if (JobWorkflowModes.IsAdminBypass(mode))
+        {
+            if (string.IsNullOrWhiteSpace(request.Note) || request.Note.Trim().Length < 8)
+                return BadRequest(new { message = "Please describe what Sharon needs to do (at least 8 characters)." });
+
+            var note = request.Note.Trim();
+            var at = DateTime.UtcNow;
+            unit.WorkflowMode = JobWorkflowModes.AdminBypass;
+            unit.AdminBypassNote = note;
+            unit.AdminBypassAt = at;
+            unit.AdminBypassByUserId = userId;
+            unit.InternalHandoffStatus = JobHandoffStatuses.AdminBypass;
+            if (unit.Status == "Pending")
+                unit.Status = "In Progress";
+
+            if (job.TotalQty <= 1)
+            {
+                job.WorkflowMode = JobWorkflowModes.AdminBypass;
+                job.AdminBypassNote = note;
+                job.AdminBypassAt = at;
+                job.AdminBypassByUserId = userId;
+                JobHandoffService.SetHandoff(job, JobHandoffStatuses.AdminBypass);
+            }
+            else
+            {
+                JobHandoffResolver.SyncJobHandoffFromUnits(job);
+            }
+
+            if (job.Status == "Pending")
+                job.Status = "In Progress";
+
+            await _context.SaveChangesAsync();
+            await WorkflowNotificationService.NotifyAdminBypassAsync(_context, job, note);
+        }
+        else
+        {
+            // MoiMoa — mark choice; client continues with issue-moi
+            unit.WorkflowMode = JobWorkflowModes.MoiMoa;
+            unit.AdminBypassNote = string.Empty;
+            unit.AdminBypassAt = null;
+            unit.AdminBypassByUserId = null;
+            if (job.TotalQty <= 1)
+            {
+                job.WorkflowMode = JobWorkflowModes.MoiMoa;
+                job.AdminBypassNote = string.Empty;
+                job.AdminBypassAt = null;
+                job.AdminBypassByUserId = null;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        job = await _context.JobRequests
+            .Include(j => j.Units).ThenInclude(u => u.Assignees).ThenInclude(a => a.User)
+            .FirstAsync(j => j.JobRequestId == jobId);
+        var response = JobRequestMapper.ToResponse(job);
+        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
+        return Ok(response);
+    }
+
     [HttpPost("{jobId}/issue-moi")]
     [Authorize(Roles = "Admin,ClientAdmin,ClientSignatory")]
     public async Task<ActionResult<JobRequestResponse>> IssueMoiForJob(int jobId, IssueMoiRequest? request)
@@ -159,6 +253,17 @@ public class ClientJobsController : ControllerBase
         var unit = MoiFormService.ResolveUnit(job, unitNumber);
         if (unit == null)
             return BadRequest(new { message = "Session not found for this item." });
+
+        // D1: AdminBypass tasks must not start MOI; prefer explicit MoiMoa (auto-set if unset)
+        var unitMode = string.IsNullOrWhiteSpace(unit.WorkflowMode) ? job.WorkflowMode : unit.WorkflowMode;
+        if (JobWorkflowModes.IsAdminBypass(unitMode))
+            return BadRequest(new { message = "This task was sent to LGB without MOI/MOA. Contact your LGB admin to change that." });
+        if (string.IsNullOrWhiteSpace(unitMode))
+        {
+            unit.WorkflowMode = JobWorkflowModes.MoiMoa;
+            if (job.TotalQty <= 1)
+                job.WorkflowMode = JobWorkflowModes.MoiMoa;
+        }
 
         var moiForm = await MoiFormService.EnsureMoiForUnitAsync(_context, job, unit);
 
@@ -290,6 +395,30 @@ public class ClientJobsController : ControllerBase
 
         if (request.MarkUnitComplete)
         {
+            // D1: tasks that chose MOI/MOA cannot be closed client-side until LGB completes the workflow
+            var mode = string.IsNullOrWhiteSpace(unit.WorkflowMode) ? job.WorkflowMode : unit.WorkflowMode;
+            if (JobWorkflowModes.IsMoiMoa(mode))
+            {
+                var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit);
+                if (!string.Equals(handoff, JobHandoffStatuses.Completed, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(handoff, JobHandoffStatuses.PendingExecute, StringComparison.OrdinalIgnoreCase))
+                {
+                    return BadRequest(new
+                    {
+                        message = "This task requires the MOI/MOA workflow. Complete client sign-off (or ask LGB) before marking done.",
+                    });
+                }
+            }
+
+            // AdminBypass: client already submitted instructions — Sharon closes the work
+            if (JobWorkflowModes.IsAdminBypass(mode) && !AuthHelper.IsAdmin(User))
+            {
+                return BadRequest(new
+                {
+                    message = "This request was sent to LGB. Sharon will mark it complete after the work is done.",
+                });
+            }
+
             unit.Status = "Completed";
             unit.CompletedAt = DateTime.UtcNow;
             await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);

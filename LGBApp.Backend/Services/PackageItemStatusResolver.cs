@@ -145,6 +145,9 @@ public static class PackageItemStatusResolver
         if (string.Equals(handoff, JobHandoffStatuses.ClientSubmitted, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.AwaitingIntake);
 
+        if (string.Equals(handoff, JobHandoffStatuses.AdminBypass, StringComparison.OrdinalIgnoreCase))
+            return Result(PackageItemStatuses.AdminBypass);
+
         if (string.Equals(handoff, JobHandoffStatuses.AwaitingSecAssignment, StringComparison.OrdinalIgnoreCase))
             return Result(PackageItemStatuses.ResolutionPrep);
 
