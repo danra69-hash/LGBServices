@@ -1,10 +1,17 @@
 -- pgloader script for §8 of docs/POSTGRES_MIGRATION_GUIDE.md
--- Copy to migrate.load, set absolute paths, then: pgloader migrate.load
+-- Copy to migrate.load, set paths, then run via brew pgloader or:
+--   docker run --rm --platform linux/amd64 --network container:<pg-container> \
+--     -v /abs/path/lgbapp.db:/data/lgbapp.db:ro \
+--     -v $PWD/migrate.load:/migrate.load:ro \
+--     dimitri/pgloader:latest pgloader /migrate.load
+--
 -- Requires the Postgres schema to already exist via EF Migrate (Pg_Baseline).
+-- If source SQLite is older than WorkflowMode/ConcurrencyStamp columns, see §8
+-- "Pre-load gotcha" — DROP NOT NULL before load, backfill after.
 
 load database
-    from sqlite:///ABSOLUTE/PATH/TO/lgbapp.db
-    into postgresql://postgres:lgb@localhost:5433/lgbapp
+    from sqlite:///data/lgbapp.db
+    into postgresql://postgres:lgb@127.0.0.1:5432/lgbapp
 
  with data only, drop indexes, reset sequences, quote identifiers
  set work_mem to '128MB', maintenance_work_mem to '512MB'

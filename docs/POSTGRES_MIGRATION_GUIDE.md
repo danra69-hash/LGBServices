@@ -212,6 +212,36 @@ load database
    - `reset sequences` — fixes identity counters (also do the explicit check in step 4).
    - `session_replication_role = replica` — lets rows load in any order without tripping FK constraints mid-copy; restored to `default` after.
 3. Run: `pgloader migrate.load`. Read the summary — row counts per table must be > 0 for the tables that had data.
+
+> **Pre-load gotcha (schema newer than data):** if the SQLite file predates columns like `WorkflowMode` / `ConcurrencyStamp` / `AdminBypassNote`, those source columns are absent and Postgres copies `NULL` into `NOT NULL` columns → `COPY` fails. Before loading:
+> ```sql
+> ALTER TABLE "JobRequests" ALTER COLUMN "WorkflowMode" DROP NOT NULL;
+> ALTER TABLE "JobRequests" ALTER COLUMN "AdminBypassNote" DROP NOT NULL;
+> ALTER TABLE "JobRequestUnits" ALTER COLUMN "WorkflowMode" DROP NOT NULL;
+> ALTER TABLE "JobRequestUnits" ALTER COLUMN "AdminBypassNote" DROP NOT NULL;
+> ALTER TABLE "MOIForms" ALTER COLUMN "ConcurrencyStamp" DROP NOT NULL;
+> ALTER TABLE "MOAForms" ALTER COLUMN "ConcurrencyStamp" DROP NOT NULL;
+> ```
+> After a clean load, backfill and restore `NOT NULL`:
+> ```sql
+> UPDATE "JobRequests" SET "WorkflowMode" = '' WHERE "WorkflowMode" IS NULL;
+> UPDATE "JobRequests" SET "AdminBypassNote" = '' WHERE "AdminBypassNote" IS NULL;
+> UPDATE "JobRequestUnits" SET "WorkflowMode" = '' WHERE "WorkflowMode" IS NULL;
+> UPDATE "JobRequestUnits" SET "AdminBypassNote" = '' WHERE "AdminBypassNote" IS NULL;
+> UPDATE "MOIForms" SET "ConcurrencyStamp" = gen_random_uuid() WHERE "ConcurrencyStamp" IS NULL;
+> UPDATE "MOAForms" SET "ConcurrencyStamp" = gen_random_uuid() WHERE "ConcurrencyStamp" IS NULL;
+> -- then ALTER … SET NOT NULL + SET DEFAULT as needed
+> ```
+>
+> **Docker pgloader (no local brew install):** share the Postgres container network and mount the SQLite file:
+> ```bash
+> docker run --rm --platform linux/amd64 --network container:lgb-pg \
+>   -v /absolute/path/lgbapp.db:/data/lgbapp.db:ro \
+>   -v "$PWD/docs/deploy/migrate.load.example:/migrate.load:ro" \
+>   dimitri/pgloader:latest pgloader /migrate.load
+> ```
+> (Adjust the `into postgresql://…` host in the load file to `127.0.0.1:5432` when using `--network container:…`.)
+
 4. **Reset identity sequences** (critical — otherwise the first new insert PK-collides):
 ```sql
 -- run in psql against lgbapp; repeat pattern for EVERY table with an int identity PK
