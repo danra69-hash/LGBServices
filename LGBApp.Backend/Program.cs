@@ -57,7 +57,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     if (isSqlite)
         options.UseSqlite(connectionString);
     else if (isPostgres)
-        options.UseNpgsql(connectionString);
+        options.UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure());
     else
         options.UseSqlServer(connectionString);
 

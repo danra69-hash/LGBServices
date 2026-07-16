@@ -173,6 +173,33 @@ public class WorkflowHandoffTests
     }
 
     [Fact]
+    public async Task IntakeReject_ClearsClientApprovals_SoResignRequired()
+    {
+        using var db = new TestDbFactory();
+        var customer = db.SeedCustomer();
+        var job = db.SeedServiceJob(customer, handoff: JobHandoffStatuses.ClientSubmitted);
+        var moi = db.SeedMoi(job, workflowState: MoiWorkflowStates.PendingAdminIntake);
+        moi.ClientApprovalsJson = """[{"userId":1,"accountHolderName":"Alice"}]""";
+        await db.Context.SaveChangesAsync();
+
+        var sharon = new User
+        {
+            Email = "sharon@test.local",
+            Name = "Sharon",
+            PasswordHash = "x",
+            Role = UserRoles.Admin,
+            CreatedAt = DateTime.UtcNow,
+        };
+        db.Context.Users.Add(sharon);
+        await db.Context.SaveChangesAsync();
+
+        await JobHandoffService.OnMoiIntakeRejectedAsync(db.Context, job, moi, sharon, "Missing docs");
+
+        Assert.Equal(MoiWorkflowStates.MoiRejected, moi.WorkflowState);
+        Assert.Equal("[]", moi.ClientApprovalsJson);
+    }
+
+    [Fact]
     public async Task MultiSession_SharonSignOff_OnlyAffectsTargetUnit()
     {
         using var db = new TestDbFactory();

@@ -159,6 +159,14 @@ public static class JobRequestUnitService
 
     public static async Task RefreshJobAggregateAsync(AppDbContext context, JobRequest job)
     {
+        // Review #4 §3: under Postgres READ COMMITTED, serialize aggregate refresh so
+        // parallel unit completions cannot last-writer-win a stale UsedQty.
+        if (context.Database.IsNpgsql() && context.Database.CurrentTransaction != null)
+        {
+            await context.Database.ExecuteSqlInterpolatedAsync(
+                $@"SELECT 1 FROM ""JobRequests"" WHERE ""JobRequestId"" = {job.JobRequestId} FOR UPDATE");
+        }
+
         var units = await context.JobRequestUnits
             .Include(u => u.Assignees)
             .ThenInclude(a => a.User)
@@ -169,7 +177,9 @@ public static class JobRequestUnitService
         foreach (var unit in units)
             await SyncUnitAssigneeFieldsAsync(context, unit);
 
-        job.UsedQty = units.Count(u => u.Status == "Completed");
+        // Prefer a DB COUNT of completed units, then overlay not-yet-saved Status changes
+        // on tracked entities so callers that mark complete before SaveChanges still work.
+        job.UsedQty = await CountCompletedUnitsAsync(context, job.JobRequestId);
 
         var assigneeNames = units
             .SelectMany(u => u.Assignees.Select(a => a.User.Name))
@@ -186,6 +196,12 @@ public static class JobRequestUnitService
             .OrderBy(u => u.ScheduledDate)
             .FirstOrDefault()?.ScheduledDate;
 
+        var anyInProgressOrDone = units.Any(u => u.Status is "In Progress" or "Completed")
+            || context.ChangeTracker.Entries<JobRequestUnit>()
+                .Any(e => e.Entity.JobRequestId == job.JobRequestId
+                    && e.State is EntityState.Added or EntityState.Modified
+                    && e.Entity.Status is "In Progress" or "Completed");
+
         if (job.UsedQty >= job.TotalQty && job.TotalQty > 0)
         {
             job.Status = "Completed";
@@ -194,11 +210,34 @@ public static class JobRequestUnitService
         else
         {
             job.DateCompleted = null;
-            if (units.Any(u => u.Status is "In Progress" or "Completed"))
-                job.Status = "In Progress";
-            else
-                job.Status = "Pending";
+            job.Status = anyInProgressOrDone ? "In Progress" : "Pending";
         }
+    }
+
+    /// <summary>
+    /// Review #4 §3: <c>COUNT(*)</c> from the database, adjusted for tracked but unsaved Status.
+    /// </summary>
+    internal static async Task<int> CountCompletedUnitsAsync(AppDbContext context, int jobRequestId)
+    {
+        var tracked = context.ChangeTracker.Entries<JobRequestUnit>()
+            .Where(e => e.Entity.JobRequestId == jobRequestId
+                && e.State is not (EntityState.Detached or EntityState.Deleted))
+            .ToList();
+        var trackedIds = tracked
+            .Select(e => e.Entity.JobRequestUnitId)
+            .Where(id => id > 0)
+            .ToHashSet();
+
+        var completedInDb = await context.JobRequestUnits
+            .AsNoTracking()
+            .CountAsync(u => u.JobRequestId == jobRequestId
+                && u.Status == "Completed"
+                && !trackedIds.Contains(u.JobRequestUnitId));
+
+        var completedTracked = tracked.Count(e =>
+            string.Equals(e.Entity.Status, "Completed", StringComparison.OrdinalIgnoreCase));
+
+        return completedInDb + completedTracked;
     }
 
     public static async Task RevertUnitCompleteAsync(AppDbContext context, JobRequestUnit unit, JobRequest job)

@@ -572,6 +572,9 @@ public static class JobHandoffService
         string reason)
     {
         form.WorkflowState = MoiWorkflowStates.MoiRejected;
+        // Review #4 §5: intake reject allows content edits before resubmit — clear
+        // signatures so clients must re-sign the revised MOI (same as client reject).
+        form.ClientApprovalsJson = "[]";
         form.UpdatedAt = DateTime.UtcNow;
         FormRejectionService.AddMoiRejection(form, new FormRejectionRecord
         {

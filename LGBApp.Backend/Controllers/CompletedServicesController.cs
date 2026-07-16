@@ -22,7 +22,9 @@ public class CompletedServicesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<CompletedServiceResponse>>> GetCompletedServices(
         [FromQuery] string? search,
-        [FromQuery] int? year)
+        [FromQuery] int? year,
+        [FromQuery] int? page = null,
+        [FromQuery] int? pageSize = null)
     {
         var query = _context.CompletedServices.AsQueryable();
 
@@ -39,11 +41,7 @@ public class CompletedServicesController : ControllerBase
                 s.JobAssignedTo.ToLower().Contains(term));
         }
 
-        var services = await query
-            .OrderByDescending(s => s.DateCompleted)
-            .ToListAsync();
-
-        // S2: JobAssignedTo may be a comma-joined multi-assignee list
+        // Review #4 §6: push assignee filter into SQL where possible (exact + comma-list contains).
         if (!AuthHelper.IsAdmin(User))
         {
             var userId = AuthHelper.CurrentUserId(User);
@@ -51,24 +49,22 @@ public class CompletedServicesController : ControllerBase
                 return Ok(Array.Empty<CompletedServiceResponse>());
 
             var userName = (AuthHelper.CurrentUserName(User) ?? string.Empty).Trim();
-            services = services
-                .Where(s => IsAssigneeMatch(s.JobAssignedTo, userName))
-                .ToList();
+            if (string.IsNullOrWhiteSpace(userName))
+                return Ok(Array.Empty<CompletedServiceResponse>());
+
+            var name = userName.ToLower();
+            query = query.Where(s =>
+                s.JobAssignedTo.ToLower() == name
+                || ("," + s.JobAssignedTo.ToLower() + ",").Contains("," + name + ","));
         }
 
+        var (p, size) = Pagination.Normalize(page, pageSize);
+        var services = await query
+            .OrderByDescending(s => s.DateCompleted)
+            .Skip((p - 1) * size)
+            .Take(size)
+            .ToListAsync();
+
         return services.Select(CompletedServiceMapper.ToResponse).ToList();
-    }
-
-    private static bool IsAssigneeMatch(string jobAssignedTo, string userName)
-    {
-        if (string.IsNullOrWhiteSpace(userName) || string.IsNullOrWhiteSpace(jobAssignedTo))
-            return false;
-
-        if (string.Equals(jobAssignedTo.Trim(), userName, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return jobAssignedTo
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(part => string.Equals(part, userName, StringComparison.OrdinalIgnoreCase));
     }
 }

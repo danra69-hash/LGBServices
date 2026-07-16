@@ -20,7 +20,9 @@ public class ClientJobsController : ControllerBase
     [HttpGet("my-jobs")]
     [Authorize(Roles = "Admin,ClientAdmin,ClientSignatory")]
     public async Task<ActionResult<IEnumerable<JobRequestResponse>>> GetMyCompanyJobs(
-        [FromQuery] bool includeCompleted = false)
+        [FromQuery] bool includeCompleted = false,
+        [FromQuery] int? page = null,
+        [FromQuery] int? pageSize = null)
     {
         if (!AuthHelper.IsAdmin(User) && !AuthHelper.IsExternalUser(User))
             return Forbid();
@@ -41,12 +43,16 @@ public class ClientJobsController : ControllerBase
         if (accessibleCustomerIds != null)
             query = query.Where(j => j.CustomerId.HasValue && accessibleCustomerIds.Contains(j.CustomerId.Value));
 
+        // Review #4 §6: push external Service-only filter into SQL; page in DB.
+        if (AuthHelper.IsExternalUser(User))
+            query = query.Where(j => j.TaskType == "Service");
+
+        var (p, size) = Pagination.Normalize(page, pageSize);
         var jobs = await query
             .OrderByDescending(j => j.DateRequested)
+            .Skip((p - 1) * size)
+            .Take(size)
             .ToListAsync();
-
-        if (AuthHelper.IsExternalUser(User))
-            jobs = jobs.Where(j => j.TaskType == "Service").ToList();
 
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();
         await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses, User);

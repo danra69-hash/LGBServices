@@ -31,7 +31,9 @@ public class JobRequestsController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IEnumerable<JobRequestResponse>>> GetJobRequests(
         [FromQuery] int? customerPackageId,
-        [FromQuery] bool includeCompleted = false)
+        [FromQuery] bool includeCompleted = false,
+        [FromQuery] int? page = null,
+        [FromQuery] int? pageSize = null)
     {
         var query = JobQuery();
 
@@ -56,25 +58,41 @@ public class JobRequestsController : ControllerBase
             query = query.Where(j => j.CustomerId.HasValue && ids.Contains(j.CustomerId.Value));
         }
 
+        var (p, size) = Pagination.Normalize(page, pageSize);
+
+        // External users: visibility is fully expressible in SQL — page in the database.
+        if (AuthHelper.IsExternalUser(User))
+        {
+            var externalJobs = await query
+                .OrderBy(j => j.TaskType)
+                .ThenBy(j => j.Service)
+                .ThenBy(j => j.AccountHolder)
+                .Skip((p - 1) * size)
+                .Take(size)
+                .ToListAsync();
+            var externalResponses = externalJobs.Select(JobRequestMapper.ToResponse).ToList();
+            await JobFormLinkService.EnrichWithFormLinksAsync(_context, externalResponses, User);
+            return externalResponses;
+        }
+
+        // Internal: release/assignee visibility still needs in-memory helpers; page after filter.
         var jobs = await query
             .OrderBy(j => j.TaskType)
             .ThenBy(j => j.Service)
             .ThenBy(j => j.AccountHolder)
             .ToListAsync();
 
-        if (!AuthHelper.IsExternalUser(User))
-        {
-            var moisByJobId = await LoadMoisByJobIdAsync(jobs.Select(j => j.JobRequestId));
-            jobs = InternalWorkVisibilityHelper.FilterJobsForInternal(jobs, moisByJobId);
+        var moisByJobId = await LoadMoisByJobIdAsync(jobs.Select(j => j.JobRequestId));
+        jobs = InternalWorkVisibilityHelper.FilterJobsForInternal(jobs, moisByJobId);
 
-            if (!AuthHelper.IsAdmin(User))
-            {
-                jobs = jobs
-                    .Where(j => TaskFormVisibilityHelper.CanInternalUserSeeJob(User, j))
-                    .ToList();
-            }
+        if (!AuthHelper.IsAdmin(User))
+        {
+            jobs = jobs
+                .Where(j => TaskFormVisibilityHelper.CanInternalUserSeeJob(User, j))
+                .ToList();
         }
 
+        jobs = jobs.Skip((p - 1) * size).Take(size).ToList();
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();
         await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses, User);
         return responses;
@@ -321,45 +339,53 @@ public class JobRequestsController : ControllerBase
         if (!SecretarialStaffService.IsAssignableInternalStaff(user))
             return BadRequest(new { message = "Only internal secretarial staff or internal admins can be assigned to jobs." });
 
-        await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
-        job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
-
-        var unit = JobRequestUnitService.ResolveUnit(job, request.UnitNumber);
-        if (unit == null)
-            return BadRequest(new { message = "No unit available to assign." });
-
-        var moiForms = await _context.MOIForms
-            .Where(f => f.JobRequestId == id)
-            .ToListAsync();
-        var moi = ResolveMoiForUnit(moiForms, unit, job.TotalQty);
-        var previousUnit = job.Units.FirstOrDefault(u => u.UnitNumber == unit.UnitNumber - 1);
-        var previousMoi = previousUnit != null
-            ? ResolveMoiForUnit(moiForms, previousUnit, job.TotalQty)
-            : null;
-        if (!UnitAssignmentGate.CanAssignUnit(job, unit, job.Units.ToList(), moi, previousMoi))
-            return BadRequest(new { message = "This session is not ready for team assignment yet. Complete the prior session's MOI first." });
-
-        if (request.Remove)
-            await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, user.UserId, job);
-        else
+        return await TransactionHelper.ExecuteInTransactionAsync(_context, async () =>
         {
-            await JobRequestUnitService.AddAssigneeAsync(_context, unit, user);
-            await JobHandoffService.OnSecretarialStaffAssignedToUnitAsync(_context, job, unit, moi);
-        }
+            await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
+            job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
 
-        if (!string.IsNullOrWhiteSpace(request.Comments))
-            job.AssignmentComments = request.Comments;
+            var unit = JobRequestUnitService.ResolveUnit(job, request.UnitNumber);
+            if (unit == null)
+                return (false, (IActionResult)BadRequest(new { message = "No unit available to assign." }));
 
-        if (DateOnlyHelper.Parse(request.AcceptedDate) is { } accepted)
-            job.DateRequested = accepted;
+            var moiForms = await _context.MOIForms
+                .Where(f => f.JobRequestId == id)
+                .ToListAsync();
+            var moi = ResolveMoiForUnit(moiForms, unit, job.TotalQty);
+            var previousUnit = job.Units.FirstOrDefault(u => u.UnitNumber == unit.UnitNumber - 1);
+            var previousMoi = previousUnit != null
+                ? ResolveMoiForUnit(moiForms, previousUnit, job.TotalQty)
+                : null;
+            if (!UnitAssignmentGate.CanAssignUnit(job, unit, job.Units.ToList(), moi, previousMoi))
+            {
+                return (false, BadRequest(new
+                {
+                    message = "This session is not ready for team assignment yet. Complete the prior session's MOI first.",
+                }));
+            }
 
-        await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
-        await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
-        await JobHandoffService.OnJobAcceptedAsync(_context, job);
-        await _context.SaveChangesAsync();
+            if (request.Remove)
+                await JobRequestUnitService.RemoveAssigneeAsync(_context, unit, user.UserId, job);
+            else
+            {
+                await JobRequestUnitService.AddAssigneeAsync(_context, unit, user);
+                await JobHandoffService.OnSecretarialStaffAssignedToUnitAsync(_context, job, unit, moi);
+            }
 
-        job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
-        return Ok(JobRequestMapper.ToResponse(job));
+            if (!string.IsNullOrWhiteSpace(request.Comments))
+                job.AssignmentComments = request.Comments;
+
+            if (DateOnlyHelper.Parse(request.AcceptedDate) is { } accepted)
+                job.DateRequested = accepted;
+
+            await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
+            await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
+            await JobHandoffService.OnJobAcceptedAsync(_context, job);
+            await _context.SaveChangesAsync();
+
+            job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
+            return (true, (IActionResult)Ok(JobRequestMapper.ToResponse(job)));
+        });
     }
 
     [HttpPost("{id}/handoff")]
@@ -495,132 +521,154 @@ public class JobRequestsController : ControllerBase
         if (!AuthHelper.CanAccessJob(User, job))
             return Forbid();
 
-        await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
-        job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
-
-        var unitNumber = request.UnitNumber ?? (job.TotalQty == 1 ? 1 : null);
-        if (!unitNumber.HasValue)
-            return BadRequest(new { message = "Unit number is required for multi-quantity items." });
-
-        var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
-        if (unit == null)
-            return BadRequest(new { message = "Unit not found." });
-
-        var isAdmin = AuthHelper.IsAdmin(User);
-        var actorId = AuthHelper.CurrentUserId(User);
-
-        if (!isAdmin)
+        return await TransactionHelper.ExecuteInTransactionAsync(_context, async () =>
         {
-            if (!actorId.HasValue)
-                return Forbid();
-            if (!JobRequestUnitService.IsUserAssigned(unit, actorId.Value))
-                return Forbid();
-        }
+            await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
+            job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
 
-        if (request.UserId.HasValue && isAdmin)
-        {
-            var assignUser = await _context.Users.FindAsync(request.UserId.Value);
-            if (assignUser == null)
-                return BadRequest(new { message = "Selected user was not found." });
-            await JobRequestUnitService.AddAssigneeAsync(_context, unit, assignUser);
-        }
-
-        if (request.ScheduledDate is not null)
-        {
-            if (!AuthHelper.IsClientAdmin(User))
-                return BadRequest(new { message = "Scheduled dates are set by the client company." });
-
-            unit.ScheduledDate = string.IsNullOrWhiteSpace(request.ScheduledDate)
-                ? null
-                : DateOnlyHelper.Parse(request.ScheduledDate);
-            await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
-        }
-
-        if (request.MarkUnitComplete && request.MarkUnitIncomplete)
-            return BadRequest(new { message = "Cannot mark a unit complete and incomplete in the same request." });
-
-        var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit);
-        if (request.MarkUnitComplete || request.MarkUnitIncomplete)
-        {
-            if (handoff is JobHandoffStatuses.ReadyForMoa or JobHandoffStatuses.MoaCirculation)
+            var unitNumber = request.UnitNumber ?? (job.TotalQty == 1 ? 1 : null);
+            if (!unitNumber.HasValue)
             {
-                return BadRequest(new
+                return (false, (IActionResult)BadRequest(new
                 {
-                    message = "This item must be completed via MOA sign-off, not manual progress.",
-                });
+                    message = "Unit number is required for multi-quantity items.",
+                }));
             }
-        }
 
-        if (request.MarkUnitComplete)
-        {
-            if (handoff is JobHandoffStatuses.PendingExecute or JobHandoffStatuses.ExecutionSecComplete)
+            var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
+            if (unit == null)
+                return (false, BadRequest(new { message = "Unit not found." }));
+
+            var isAdmin = AuthHelper.IsAdmin(User);
+            var actorId = AuthHelper.CurrentUserId(User);
+
+            if (!isAdmin)
             {
-                if (!isAdmin && !AuthHelper.CanApproveMoa(User))
-                    return Forbid();
+                if (!actorId.HasValue || !JobRequestUnitService.IsUserAssigned(unit, actorId.Value))
+                    return (false, (IActionResult)Forbid());
+            }
 
-                var moaForm = await ResolveMoaFormForHandoffAsync(job, unitNumber);
-                await JobHandoffService.OnExecutionCompletedAsync(_context, job, unit, moaForm);
+            if (request.UserId.HasValue && isAdmin)
+            {
+                var assignUser = await _context.Users.FindAsync(request.UserId.Value);
+                if (assignUser == null)
+                    return (false, BadRequest(new { message = "Selected user was not found." }));
+                await JobRequestUnitService.AddAssigneeAsync(_context, unit, assignUser);
+            }
+
+            if (request.ScheduledDate is not null)
+            {
+                if (!AuthHelper.IsClientAdmin(User))
+                {
+                    return (false, BadRequest(new
+                    {
+                        message = "Scheduled dates are set by the client company.",
+                    }));
+                }
+
+                unit.ScheduledDate = string.IsNullOrWhiteSpace(request.ScheduledDate)
+                    ? null
+                    : DateOnlyHelper.Parse(request.ScheduledDate);
+                await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
+            }
+
+            if (request.MarkUnitComplete && request.MarkUnitIncomplete)
+            {
+                return (false, BadRequest(new
+                {
+                    message = "Cannot mark a unit complete and incomplete in the same request.",
+                }));
+            }
+
+            var handoff = JobHandoffResolver.ResolveEffectiveHandoff(job, unit);
+            if (request.MarkUnitComplete || request.MarkUnitIncomplete)
+            {
+                if (handoff is JobHandoffStatuses.ReadyForMoa or JobHandoffStatuses.MoaCirculation)
+                {
+                    return (false, BadRequest(new
+                    {
+                        message = "This item must be completed via MOA sign-off, not manual progress.",
+                    }));
+                }
+            }
+
+            if (request.MarkUnitComplete)
+            {
+                if (handoff is JobHandoffStatuses.PendingExecute or JobHandoffStatuses.ExecutionSecComplete)
+                {
+                    if (!isAdmin && !AuthHelper.CanApproveMoa(User))
+                        return (false, (IActionResult)Forbid());
+
+                    var moaForm = await ResolveMoaFormForHandoffAsync(job, unitNumber);
+                    await JobHandoffService.OnExecutionCompletedAsync(_context, job, unit, moaForm);
+                }
+                else
+                {
+                    // R3: AdminBypass never had prep assignees — attribute completion to the acting admin
+                    var unitMode = !string.IsNullOrWhiteSpace(unit.WorkflowMode)
+                        ? unit.WorkflowMode
+                        : job.WorkflowMode;
+                    if (JobWorkflowModes.IsAdminBypass(unitMode)
+                        && string.IsNullOrWhiteSpace(job.JobAssignedTo))
+                    {
+                        var actor = AuthHelper.CurrentUserName(User);
+                        if (!string.IsNullOrWhiteSpace(actor))
+                            job.JobAssignedTo = actor.Trim();
+                    }
+
+                    unit.Status = "Completed";
+                    unit.CompletedAt = DateTime.UtcNow;
+                    await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
+                    await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
+
+                    if (job.Status == "Completed")
+                    {
+                        _context.CompletedServices.Add(new CompletedService
+                        {
+                            JobRequestId = job.JobRequestId,
+                            Customer = job.Customer,
+                            Service = job.Service,
+                            UsedQty = job.UsedQty,
+                            TotalQty = job.TotalQty,
+                            DateRequested = job.DateRequested,
+                            DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
+                            AccountHolder = job.AccountHolder,
+                            JobAssignedTo = job.JobAssignedTo,
+                            Status = "Completed",
+                            CreatedAt = DateTime.UtcNow
+                        });
+                    }
+                }
+            }
+            else if (request.MarkUnitIncomplete)
+            {
+                if (unit.Status != "Completed")
+                {
+                    return (false, BadRequest(new
+                    {
+                        message = "Only completed units can be reverted.",
+                    }));
+                }
+
+                var wasJobCompleted = job.Status == "Completed";
+                await JobRequestUnitService.RevertUnitCompleteAsync(_context, unit, job);
+                await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
+
+                if (wasJobCompleted && job.Status != "Completed")
+                    await JobRequestUnitService.RemoveLatestCompletedServiceRecordAsync(_context, job);
             }
             else
             {
-                // R3: AdminBypass never had prep assignees — attribute completion to the acting admin
-                var unitMode = !string.IsNullOrWhiteSpace(unit.WorkflowMode)
-                    ? unit.WorkflowMode
-                    : job.WorkflowMode;
-                if (JobWorkflowModes.IsAdminBypass(unitMode)
-                    && string.IsNullOrWhiteSpace(job.JobAssignedTo))
-                {
-                    var actor = AuthHelper.CurrentUserName(User);
-                    if (!string.IsNullOrWhiteSpace(actor))
-                        job.JobAssignedTo = actor.Trim();
-                }
-
-                unit.Status = "Completed";
-                unit.CompletedAt = DateTime.UtcNow;
-                await JobRequestUnitService.SyncUnitToTrackerAsync(_context, unit, job);
                 await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
-
-                if (job.Status == "Completed")
-                {
-                    _context.CompletedServices.Add(new CompletedService
-                    {
-                        JobRequestId = job.JobRequestId,
-                        Customer = job.Customer,
-                        Service = job.Service,
-                        UsedQty = job.UsedQty,
-                        TotalQty = job.TotalQty,
-                        DateRequested = job.DateRequested,
-                        DateCompleted = job.DateCompleted ?? DateTime.UtcNow,
-                        AccountHolder = job.AccountHolder,
-                        JobAssignedTo = job.JobAssignedTo,
-                        Status = "Completed",
-                        CreatedAt = DateTime.UtcNow
-                    });
-                }
             }
-        }
-        else if (request.MarkUnitIncomplete)
-        {
-            if (unit.Status != "Completed")
-                return BadRequest(new { message = "Only completed units can be reverted." });
 
-            var wasJobCompleted = job.Status == "Completed";
-            await JobRequestUnitService.RevertUnitCompleteAsync(_context, unit, job);
-            await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
+            await _context.SaveChangesAsync();
 
-            if (wasJobCompleted && job.Status != "Completed")
-                await JobRequestUnitService.RemoveLatestCompletedServiceRecordAsync(_context, job);
-        }
-        else
-        {
-            await JobRequestUnitService.RefreshJobAggregateAsync(_context, job);
-        }
-
-        await _context.SaveChangesAsync();
-        job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
-        var progressResponse = JobRequestMapper.ToResponse(job);
-        await JobFormLinkService.EnrichWithFormLinksAsync(_context, [progressResponse], User);
-        return Ok(progressResponse);
+            job = await JobQuery().FirstAsync(j => j.JobRequestId == id);
+            var progressResponse = JobRequestMapper.ToResponse(job);
+            await JobFormLinkService.EnrichWithFormLinksAsync(_context, [progressResponse], User);
+            return (true, (IActionResult)Ok(progressResponse));
+        });
     }
 
     [HttpPut("{id}")]

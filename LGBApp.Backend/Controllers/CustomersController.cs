@@ -20,7 +20,10 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<CustomerResponse>>> GetCustomers([FromQuery] string? search)
+    public async Task<ActionResult<IEnumerable<CustomerResponse>>> GetCustomers(
+        [FromQuery] string? search,
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize)
     {
         var query = _context.Customers
             .Include(c => c.AccountHolders)
@@ -37,7 +40,12 @@ public class CustomersController : ControllerBase
                 c.Package.ToLower().Contains(term));
         }
 
-        var customers = await query.OrderBy(c => c.Company).ToListAsync();
+        var (p, size) = Pagination.Normalize(page, pageSize);
+        var customers = await query
+            .OrderBy(c => c.Company)
+            .Skip((p - 1) * size)
+            .Take(size)
+            .ToListAsync();
         return customers.Select(CustomerMapper.ToResponse).ToList();
     }
 
@@ -58,29 +66,37 @@ public class CustomersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<CustomerResponse>> CreateCustomer(CreateCustomerRequest request)
     {
-        var customer = CustomerMapper.FromCreateRequest(request);
-        await BillingPartyService.ApplyPartySelectionsAsync(
-            _context, customer, request.InvoiceByPartyIds, request.ChargeToPartyIds);
-        if (string.IsNullOrWhiteSpace(customer.InvoiceBy) && !string.IsNullOrWhiteSpace(request.InvoiceBy))
-            customer.InvoiceBy = request.InvoiceBy;
-        if (string.IsNullOrWhiteSpace(customer.ChargeTo) && !string.IsNullOrWhiteSpace(request.ChargeTo))
-            customer.ChargeTo = request.ChargeTo;
-        _context.Customers.Add(customer);
-        await _context.SaveChangesAsync();
+        return await TransactionHelper.ExecuteInTransactionAsync(_context, async () =>
+        {
+            var customer = CustomerMapper.FromCreateRequest(request);
+            await BillingPartyService.ApplyPartySelectionsAsync(
+                _context, customer, request.InvoiceByPartyIds, request.ChargeToPartyIds);
+            if (string.IsNullOrWhiteSpace(customer.InvoiceBy) && !string.IsNullOrWhiteSpace(request.InvoiceBy))
+                customer.InvoiceBy = request.InvoiceBy;
+            if (string.IsNullOrWhiteSpace(customer.ChargeTo) && !string.IsNullOrWhiteSpace(request.ChargeTo))
+                customer.ChargeTo = request.ChargeTo;
+            _context.Customers.Add(customer);
+            await _context.SaveChangesAsync();
 
-        await _context.Entry(customer).Collection(c => c.AccountHolders).LoadAsync();
-        await _context.Entry(customer).Collection(c => c.Packages).LoadAsync();
-        await JobRequestSyncService.SyncCustomerWorkAsync(_context, customer);
-        await _context.SaveChangesAsync();
-        var jobs = await _context.JobRequests.Where(j => j.CustomerId == customer.CustomerId).ToListAsync();
-        foreach (var job in jobs)
-            await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
-        await CustomerClientAdminProvisioner.EnsureClientAdminAsync(_context, customer);
-        await CustomerSignatoryProvisioner.SyncSignatoriesAsync(
-            _context, customer, AuthHelper.CurrentUserId(User));
-        await JobRequestSyncService.SyncCustomerWorkAsync(_context, customer);
-        await _context.SaveChangesAsync();
-        return CreatedAtAction(nameof(GetCustomer), new { id = customer.CustomerId }, CustomerMapper.ToResponse(customer));
+            await _context.Entry(customer).Collection(c => c.AccountHolders).LoadAsync();
+            await _context.Entry(customer).Collection(c => c.Packages).LoadAsync();
+            await JobRequestSyncService.SyncCustomerWorkAsync(_context, customer);
+            await _context.SaveChangesAsync();
+            var jobs = await _context.JobRequests.Where(j => j.CustomerId == customer.CustomerId).ToListAsync();
+            foreach (var job in jobs)
+                await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
+            await CustomerClientAdminProvisioner.EnsureClientAdminAsync(_context, customer);
+            await CustomerSignatoryProvisioner.SyncSignatoriesAsync(
+                _context, customer, AuthHelper.CurrentUserId(User));
+            await JobRequestSyncService.SyncCustomerWorkAsync(_context, customer);
+            await _context.SaveChangesAsync();
+
+            ActionResult<CustomerResponse> created = CreatedAtAction(
+                nameof(GetCustomer),
+                new { id = customer.CustomerId },
+                CustomerMapper.ToResponse(customer));
+            return (true, created);
+        });
     }
 
     [HttpPut("{id}")]
@@ -94,70 +110,71 @@ public class CustomersController : ControllerBase
         if (customer == null)
             return NotFound();
 
-        await using var tx = await _context.Database.BeginTransactionAsync();
-
-        CustomerMapper.ApplyUpdate(customer, request);
-        await BillingPartyService.ApplyPartySelectionsAsync(
-            _context, customer, request.InvoiceByPartyIds, request.ChargeToPartyIds);
-
-        // §7.5: upsert holders by id — do not churn IDs on every save
-        var existingById = customer.AccountHolders.ToDictionary(h => h.AccountHolderId);
-        var keepIds = new HashSet<int>();
-        foreach (var h in request.AccountHolders)
+        return await TransactionHelper.ExecuteInTransactionAsync(_context, async () =>
         {
-            var needsMoi = h.Moi || request.Moi.Contains(h.Name, StringComparer.OrdinalIgnoreCase);
-            var needsMoiApproval = h.MoiApproval || request.MoiApproval.Contains(h.Name, StringComparer.OrdinalIgnoreCase);
-            var needsMoa = h.Moa || request.Moa.Contains(h.Name, StringComparer.OrdinalIgnoreCase);
+            CustomerMapper.ApplyUpdate(customer, request);
+            await BillingPartyService.ApplyPartySelectionsAsync(
+                _context, customer, request.InvoiceByPartyIds, request.ChargeToPartyIds);
 
-            if (h.Id > 0 && existingById.TryGetValue(h.Id, out var prior))
+            // §7.5: upsert holders by id — do not churn IDs on every save
+            var existingById = customer.AccountHolders.ToDictionary(h => h.AccountHolderId);
+            var keepIds = new HashSet<int>();
+            foreach (var h in request.AccountHolders)
             {
-                prior.Name = h.Name;
-                prior.Email = h.Email;
-                prior.Phone = h.Phone;
-                prior.NeedsMoi = needsMoi;
-                prior.NeedsMoiApproval = needsMoiApproval;
-                prior.NeedsMoa = needsMoa;
-                prior.ClientAdded = prior.ClientAdded || h.ClientAdded;
-                if (h.AddedByUserId.HasValue)
-                    prior.AddedByUserId = h.AddedByUserId;
-                keepIds.Add(prior.AccountHolderId);
-            }
-            else
-            {
-                customer.AccountHolders.Add(new Models.AccountHolder
+                var needsMoi = h.Moi || request.Moi.Contains(h.Name, StringComparer.OrdinalIgnoreCase);
+                var needsMoiApproval = h.MoiApproval || request.MoiApproval.Contains(h.Name, StringComparer.OrdinalIgnoreCase);
+                var needsMoa = h.Moa || request.Moa.Contains(h.Name, StringComparer.OrdinalIgnoreCase);
+
+                if (h.Id > 0 && existingById.TryGetValue(h.Id, out var prior))
                 {
-                    CustomerId = id,
-                    Name = h.Name,
-                    Email = h.Email,
-                    Phone = h.Phone,
-                    NeedsMoi = needsMoi,
-                    NeedsMoiApproval = needsMoiApproval,
-                    NeedsMoa = needsMoa,
-                    ClientAdded = h.ClientAdded,
-                    AddedByUserId = h.AddedByUserId,
-                });
+                    prior.Name = h.Name;
+                    prior.Email = h.Email;
+                    prior.Phone = h.Phone;
+                    prior.NeedsMoi = needsMoi;
+                    prior.NeedsMoiApproval = needsMoiApproval;
+                    prior.NeedsMoa = needsMoa;
+                    prior.ClientAdded = prior.ClientAdded || h.ClientAdded;
+                    if (h.AddedByUserId.HasValue)
+                        prior.AddedByUserId = h.AddedByUserId;
+                    keepIds.Add(prior.AccountHolderId);
+                }
+                else
+                {
+                    customer.AccountHolders.Add(new Models.AccountHolder
+                    {
+                        CustomerId = id,
+                        Name = h.Name,
+                        Email = h.Email,
+                        Phone = h.Phone,
+                        NeedsMoi = needsMoi,
+                        NeedsMoiApproval = needsMoiApproval,
+                        NeedsMoa = needsMoa,
+                        ClientAdded = h.ClientAdded,
+                        AddedByUserId = h.AddedByUserId,
+                    });
+                }
             }
-        }
 
-        foreach (var orphan in customer.AccountHolders
-                     .Where(h => h.AccountHolderId > 0 && !keepIds.Contains(h.AccountHolderId))
-                     .ToList())
-            _context.AccountHolders.Remove(orphan);
+            foreach (var orphan in customer.AccountHolders
+                         .Where(h => h.AccountHolderId > 0 && !keepIds.Contains(h.AccountHolderId))
+                         .ToList())
+                _context.AccountHolders.Remove(orphan);
 
-        CustomerSignatoryProvisioner.SyncCustomerSignerLists(customer);
-        await _context.SaveChangesAsync();
+            CustomerSignatoryProvisioner.SyncCustomerSignerLists(customer);
+            await _context.SaveChangesAsync();
 
-        await _context.Entry(customer).Collection(c => c.Packages).LoadAsync();
-        await CustomerSignatoryProvisioner.SyncSignatoriesAsync(
-            _context, customer, AuthHelper.CurrentUserId(User));
-        await JobRequestSyncService.SyncCustomerWorkAsync(_context, customer);
-        await _context.SaveChangesAsync();
-        var jobs = await _context.JobRequests.Where(j => j.CustomerId == customer.CustomerId).ToListAsync();
-        foreach (var job in jobs)
-            await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
+            await _context.Entry(customer).Collection(c => c.Packages).LoadAsync();
+            await CustomerSignatoryProvisioner.SyncSignatoriesAsync(
+                _context, customer, AuthHelper.CurrentUserId(User));
+            await JobRequestSyncService.SyncCustomerWorkAsync(_context, customer);
+            await _context.SaveChangesAsync();
+            var jobs = await _context.JobRequests.Where(j => j.CustomerId == customer.CustomerId).ToListAsync();
+            foreach (var job in jobs)
+                await JobRequestUnitService.SyncUnitsForJobAsync(_context, job);
 
-        await tx.CommitAsync();
-        return CustomerMapper.ToResponse(customer);
+            ActionResult<CustomerResponse> ok = CustomerMapper.ToResponse(customer);
+            return (true, ok);
+        });
     }
 
     [HttpDelete("{id}")]
