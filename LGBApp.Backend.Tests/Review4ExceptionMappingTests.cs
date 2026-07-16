@@ -44,8 +44,12 @@ public class Review4ExceptionMappingTests
     [Fact]
     public void Pagination_NormalizesAndCaps()
     {
+        Assert.False(Pagination.IsRequested(null, null));
+        Assert.True(Pagination.IsRequested(1, null));
         Assert.Equal((1, 100), Pagination.Normalize(null, null));
         Assert.Equal((2, 50), Pagination.Normalize(2, 50));
         Assert.Equal((1, 200), Pagination.Normalize(0, 999));
+        Assert.Equal(4, Pagination.ApplyInMemory([1, 2, 3, 4], null, null).Count);
+        Assert.Equal([3, 4], Pagination.ApplyInMemory([1, 2, 3, 4], 2, 2));
     }
 }

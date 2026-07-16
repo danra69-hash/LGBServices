@@ -47,11 +47,11 @@ public class ClientJobsController : ControllerBase
         if (AuthHelper.IsExternalUser(User))
             query = query.Where(j => j.TaskType == "Service");
 
-        var (p, size) = Pagination.Normalize(page, pageSize);
-        var jobs = await query
-            .OrderByDescending(j => j.DateRequested)
-            .Skip((p - 1) * size)
-            .Take(size)
+        // Omit page/pageSize → return full set (client portal company tiles need every job).
+        var jobs = await Pagination.Apply(
+                query.OrderByDescending(j => j.DateRequested),
+                page,
+                pageSize)
             .ToListAsync();
 
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();

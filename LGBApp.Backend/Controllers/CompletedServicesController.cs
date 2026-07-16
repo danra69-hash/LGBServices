@@ -58,11 +58,10 @@ public class CompletedServicesController : ControllerBase
                 || ("," + s.JobAssignedTo.ToLower() + ",").Contains("," + name + ","));
         }
 
-        var (p, size) = Pagination.Normalize(page, pageSize);
-        var services = await query
-            .OrderByDescending(s => s.DateCompleted)
-            .Skip((p - 1) * size)
-            .Take(size)
+        var services = await Pagination.Apply(
+                query.OrderByDescending(s => s.DateCompleted),
+                page,
+                pageSize)
             .ToListAsync();
 
         return services.Select(CompletedServiceMapper.ToResponse).ToList();

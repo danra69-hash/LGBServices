@@ -58,17 +58,16 @@ public class JobRequestsController : ControllerBase
             query = query.Where(j => j.CustomerId.HasValue && ids.Contains(j.CustomerId.Value));
         }
 
-        var (p, size) = Pagination.Normalize(page, pageSize);
-
         // External users: visibility is fully expressible in SQL — page in the database.
         if (AuthHelper.IsExternalUser(User))
         {
-            var externalJobs = await query
-                .OrderBy(j => j.TaskType)
-                .ThenBy(j => j.Service)
-                .ThenBy(j => j.AccountHolder)
-                .Skip((p - 1) * size)
-                .Take(size)
+            var externalJobs = await Pagination.Apply(
+                    query
+                        .OrderBy(j => j.TaskType)
+                        .ThenBy(j => j.Service)
+                        .ThenBy(j => j.AccountHolder),
+                    page,
+                    pageSize)
                 .ToListAsync();
             var externalResponses = externalJobs.Select(JobRequestMapper.ToResponse).ToList();
             await JobFormLinkService.EnrichWithFormLinksAsync(_context, externalResponses, User);
@@ -97,7 +96,7 @@ public class JobRequestsController : ControllerBase
                 .ToList();
         }
 
-        jobs = jobs.Skip((p - 1) * size).Take(size).ToList();
+        jobs = Pagination.ApplyInMemory(jobs, page, pageSize);
         var responses = jobs.Select(JobRequestMapper.ToResponse).ToList();
         await JobFormLinkService.EnrichWithFormLinksAsync(_context, responses, User);
         return responses;

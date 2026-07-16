@@ -40,11 +40,8 @@ public class CustomersController : ControllerBase
                 c.Package.ToLower().Contains(term));
         }
 
-        var (p, size) = Pagination.Normalize(page, pageSize);
-        var customers = await query
-            .OrderBy(c => c.Company)
-            .Skip((p - 1) * size)
-            .Take(size)
+        // Omit page/pageSize → return all customers (admin customer table expects the full book).
+        var customers = await Pagination.Apply(query.OrderBy(c => c.Company), page, pageSize)
             .ToListAsync();
         return customers.Select(CustomerMapper.ToResponse).ToList();
     }
