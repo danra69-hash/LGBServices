@@ -750,6 +750,9 @@ namespace LGBApp.Backend.Migrations.Postgres
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<DateTime?>("ClientActivatedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("timestamp with time zone");
 

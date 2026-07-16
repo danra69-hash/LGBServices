@@ -59,6 +59,53 @@ public class ClientJobsController : ControllerBase
         return responses;
     }
 
+    /// <summary>
+    /// Claim the next dormant multi-qty session for this package line (client portal "Add").
+    /// </summary>
+    [HttpPost("{jobId}/activate-session")]
+    [Authorize(Roles = "ClientAdmin,ClientSignatory")]
+    public async Task<ActionResult<JobRequestResponse>> ActivateSession(int jobId)
+    {
+        return await TransactionHelper.ExecuteInTransactionAsync(_context, async () =>
+        {
+            var job = await _context.JobRequests
+                .Include(j => j.Units).ThenInclude(u => u.Assignees).ThenInclude(a => a.User)
+                .FirstOrDefaultAsync(j => j.JobRequestId == jobId);
+            if (job == null)
+                return (false, (ActionResult<JobRequestResponse>)NotFound());
+
+            if (!AuthHelper.CanManageClientJob(User, job)
+                && !await AuthHelper.CanSignatoryIssueMoiAsync(_context, User, job))
+                return (false, (ActionResult<JobRequestResponse>)Forbid());
+
+            if (job.TotalQty <= 1)
+                return (false, BadRequest(new { message = "This package line is a single session — nothing to add." }));
+
+            JobRequestUnit? unit;
+            try
+            {
+                unit = await JobRequestUnitService.TryActivateNextSessionAsync(_context, job);
+            }
+            catch (DomainException ex)
+            {
+                return (false, BadRequest(new { message = ex.Message }));
+            }
+
+            if (unit == null)
+                return (false, Conflict(new { message = "No remaining sessions in this package line." }));
+
+            await _context.SaveChangesAsync();
+
+            job = await _context.JobRequests
+                .Include(j => j.Units).ThenInclude(u => u.Assignees).ThenInclude(a => a.User)
+                .FirstAsync(j => j.JobRequestId == jobId);
+            var response = JobRequestMapper.ToResponse(job);
+            await JobFormLinkService.EnrichWithFormLinksAsync(_context, [response], User);
+            response.ActiveUnitNumber = unit.UnitNumber;
+            return (true, response);
+        });
+    }
+
     /// <summary>D1: client chooses MOI/MOA workflow vs admin-bypass with a note for Sharon.</summary>
     [HttpPost("{jobId}/workflow-choice")]
     [Authorize(Roles = "Admin,ClientAdmin,ClientSignatory")]
@@ -90,6 +137,10 @@ public class ClientJobsController : ControllerBase
         var unit = job.Units.FirstOrDefault(u => u.UnitNumber == unitNumber.Value);
         if (unit == null)
             return BadRequest(new { message = "Session not found." });
+
+        // Safety: workflow choice implies the session is in play
+        if (job.TotalQty > 1 && !unit.ClientActivatedAt.HasValue)
+            unit.ClientActivatedAt = DateTime.UtcNow;
 
         var userId = AuthHelper.CurrentUserId(User);
 
@@ -276,6 +327,9 @@ public class ClientJobsController : ControllerBase
         var unit = MoiFormService.ResolveUnit(job, unitNumber);
         if (unit == null)
             return BadRequest(new { message = "Session not found for this item." });
+
+        if (job.TotalQty > 1 && !unit.ClientActivatedAt.HasValue)
+            unit.ClientActivatedAt = DateTime.UtcNow;
 
         // D1: AdminBypass tasks must not start MOI; prefer explicit MoiMoa (auto-set if unset)
         var unitMode = string.IsNullOrWhiteSpace(unit.WorkflowMode) ? job.WorkflowMode : unit.WorkflowMode;

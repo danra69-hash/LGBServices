@@ -431,6 +431,26 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "JobRequestUnits", "AdminBypassNote", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(context, "JobRequestUnits", "AdminBypassAt", "TEXT NULL");
         EnsureColumn(context, "JobRequestUnits", "AdminBypassByUserId", "INTEGER NULL");
+
+        // Concurrent multi-qty sessions: client must Activate before unit appears in open list
+        EnsureColumn(context, "JobRequestUnits", "ClientActivatedAt", "TEXT NULL");
+        context.Database.ExecuteSqlRaw("""
+            UPDATE "JobRequestUnits"
+            SET "ClientActivatedAt" = datetime('now')
+            WHERE "ClientActivatedAt" IS NULL
+              AND (
+                "Status" != 'Pending'
+                OR IFNULL("InternalHandoffStatus", '') != ''
+                OR IFNULL("WorkflowMode", '') != ''
+                OR "AdminBypassAt" IS NOT NULL
+                OR EXISTS (
+                    SELECT 1 FROM "MOIForms" m
+                    WHERE m."JobRequestUnitId" = "JobRequestUnits"."JobRequestUnitId")
+                OR EXISTS (
+                    SELECT 1 FROM "MOAForms" m
+                    WHERE m."JobRequestUnitId" = "JobRequestUnits"."JobRequestUnitId")
+              );
+            """);
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)

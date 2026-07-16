@@ -3,6 +3,7 @@ import { FileText, Plus } from 'lucide-react';
 import { ClientCompanyWorkbench } from './ClientCompanyWorkbench';
 import {
   ApiError,
+  activateClientSession,
   chooseJobWorkflow,
   getClientJobs,
   getClientPortalSummary,
@@ -331,6 +332,18 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
     }
   };
 
+  const handleActivateSession = async (job: JobRequestResponse) => {
+    setError('');
+    try {
+      const updated = await activateClientSession(job.id);
+      setJobs((prev) => prev.map((j) => (j.id === updated.id ? updated : j)));
+      return updated;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to start session.');
+      throw err;
+    }
+  };
+
   const handleIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     setIssuing(true);
@@ -510,6 +523,7 @@ export function ClientPortal({ currentUser, onOpenMoiForm, onOpenMoaForm, refres
         onSchedule={isSignatoryView ? undefined : (job, unitNumber, iso) => void handleSchedule(job, unitNumber, iso)}
         onMarkDone={isSignatoryView ? undefined : (job, unitNumber) => void handleMarkDone(job, unitNumber)}
         onUndo={isSignatoryView ? undefined : (job, unitNumber) => void handleUndo(job, unitNumber)}
+        onActivateSession={(job) => handleActivateSession(job)}
       />
 
       {workflowChoice && (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Building2, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, FileText, History, Undo2 } from 'lucide-react';
+import { Building2, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, FileText, History, Plus, Undo2 } from 'lucide-react';
 import { DateInput } from './DateInput';
 import { formatDateDisplay } from '@/lib/dates';
 import type { JobRequestResponse, JobRequestUnitDto, UserResponse } from '@/lib/api';
@@ -27,6 +27,8 @@ interface ClientCompanyWorkbenchProps {
   onSchedule?: (job: JobRequestResponse, unitNumber: number, iso: string) => void;
   onMarkDone?: (job: JobRequestResponse, unitNumber: number) => void | Promise<void>;
   onUndo?: (job: JobRequestResponse, unitNumber: number) => void | Promise<void>;
+  /** Claim next dormant multi-qty session; returns updated job. */
+  onActivateSession?: (job: JobRequestResponse) => Promise<JobRequestResponse | void>;
 }
 
 function jobUnits(job: JobRequestResponse): JobRequestUnitDto[] {
@@ -47,6 +49,17 @@ function unitIsComplete(job: JobRequestResponse, unit: JobRequestUnitDto): boole
   return key === 'completed' || key === 'canceled';
 }
 
+/** Qty-1 always active. Multi-qty needs clientActivatedAt (or completed). */
+function isSessionActive(job: JobRequestResponse, unit: JobRequestUnitDto): boolean {
+  if ((job.totalQty ?? 1) <= 1) return true;
+  if (unitIsComplete(job, unit)) return true;
+  return Boolean(unit.clientActivatedAt);
+}
+
+function isSessionDormant(job: JobRequestResponse, unit: JobRequestUnitDto): boolean {
+  return (job.totalQty ?? 1) > 1 && !unitIsComplete(job, unit) && !unit.clientActivatedAt;
+}
+
 /** Pending MOI / MOA signature for this user (or company-wide client approval wait). */
 function unitNeedsSignature(
   job: JobRequestResponse,
@@ -55,6 +68,7 @@ function unitNeedsSignature(
   isSignatoryView: boolean,
 ): boolean {
   if (unitIsComplete(job, unit)) return false;
+  if (!isSessionActive(job, unit)) return false;
   if (signatoryCanSignMoi(job, user, unit)) return true;
   if (signatoryCanSignMoa(job, user, unit)) return true;
   if (!isSignatoryView && user.needsMoa && isMoaClientSignoffPhase(job, unit)) return true;
@@ -147,8 +161,13 @@ function collectItems(
     if (category && category !== ALL_SERVICES && resolveServiceCategory(job.service) !== category) continue;
     for (const unit of jobUnits(job)) {
       const done = unitIsComplete(job, unit);
-      if (mode === 'open' && done) continue;
-      if (mode === 'completed' && !done) continue;
+      if (mode === 'open') {
+        // Multi-qty dormant sessions are not open until client Adds them.
+        if (done || !isSessionActive(job, unit)) continue;
+      } else if (mode === 'completed') {
+        if (!done) continue;
+      }
+      // mode 'all': include every unit for entitlement progress (completed/total)
       items.push({ job, unit });
     }
   }
@@ -156,16 +175,17 @@ function collectItems(
 }
 
 function categoryStats(jobs: JobRequestResponse[], company: string) {
-  const map = new Map<string, { completed: number; open: number; total: number; needsSign: boolean }>();
+  const map = new Map<string, { completed: number; open: number; total: number; remaining: number; needsSign: boolean }>();
   for (const job of jobs) {
     if ((job.customer?.trim() || 'Unknown company') !== company) continue;
     if (job.taskType !== 'Service') continue;
     const cat = resolveServiceCategory(job.service);
     for (const unit of jobUnits(job)) {
-      const row = map.get(cat) ?? { completed: 0, open: 0, total: 0, needsSign: false };
+      const row = map.get(cat) ?? { completed: 0, open: 0, total: 0, remaining: 0, needsSign: false };
       row.total += 1;
       if (unitIsComplete(job, unit)) row.completed += 1;
-      else row.open += 1;
+      else if (isSessionActive(job, unit)) row.open += 1;
+      else if (isSessionDormant(job, unit)) row.remaining += 1;
       map.set(cat, row);
     }
   }
@@ -188,6 +208,7 @@ export function ClientCompanyWorkbench({
   onSchedule,
   onMarkDone,
   onUndo,
+  onActivateSession,
 }: ClientCompanyWorkbenchProps) {
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -195,6 +216,7 @@ export function ClientCompanyWorkbench({
   const [itemIndex, setItemIndex] = useState(0);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [activatingJobId, setActivatingJobId] = useState<number | null>(null);
 
   const companies = useMemo(() => {
     const fromAccess = currentUser.accessibleCompanies?.map((c) => c.company).filter(Boolean) ?? [];
@@ -207,12 +229,15 @@ export function ClientCompanyWorkbench({
   }, [jobs, currentUser.accessibleCompanies, currentUser.customerName]);
 
   const companyMeta = useMemo(() => {
-    const map = new Map<string, { completed: number; total: number; needsSign: boolean }>();
+    const map = new Map<string, { completed: number; total: number; open: number; needsSign: boolean }>();
     for (const company of companies) {
       const all = collectItems(jobs, company, null, 'all');
       const completed = all.filter(({ job, unit }) => unitIsComplete(job, unit)).length;
+      const open = all.filter(
+        ({ job, unit }) => !unitIsComplete(job, unit) && isSessionActive(job, unit),
+      ).length;
       const needsSign = all.some(({ job, unit }) => unitNeedsSignature(job, unit, currentUser, isSignatoryView));
-      map.set(company, { completed, total: all.length, needsSign });
+      map.set(company, { completed, total: all.length, open, needsSign });
     }
     return map;
   }, [jobs, companies, currentUser, isSignatoryView]);
@@ -225,8 +250,23 @@ export function ClientCompanyWorkbench({
       return { ...cat, needsSign };
     });
     if (browseMode === 'completed') return stats.filter((c) => c.completed > 0);
-    return stats.filter((c) => c.open > 0 || c.total > 0);
+    // Keep categories with open work OR remaining multi-qty quota to Add
+    return stats.filter((c) => c.open > 0 || c.remaining > 0 || c.total > 0);
   }, [jobs, selectedCompany, browseMode, currentUser, isSignatoryView]);
+
+  const multiQtyAddable = useMemo(() => {
+    if (!selectedCompany || !selectedCategory || browseMode === 'completed') return [];
+    const lines: { job: JobRequestResponse; remaining: number }[] = [];
+    for (const job of jobs) {
+      if ((job.customer?.trim() || 'Unknown company') !== selectedCompany) continue;
+      if (job.taskType !== 'Service') continue;
+      if (resolveServiceCategory(job.service) !== selectedCategory) continue;
+      if ((job.totalQty ?? 1) <= 1) continue;
+      const remaining = jobUnits(job).filter((u) => isSessionDormant(job, u)).length;
+      if (remaining > 0) lines.push({ job, remaining });
+    }
+    return lines;
+  }, [jobs, selectedCompany, selectedCategory, browseMode]);
 
   const workItems = useMemo(() => {
     if (!selectedCompany || !selectedCategory) return [];
@@ -293,6 +333,22 @@ export function ClientCompanyWorkbench({
     await onMarkDone(job, unitNumber);
   };
 
+  const handleActivate = async (job: JobRequestResponse) => {
+    if (!onActivateSession) return;
+    setActivatingJobId(job.id);
+    try {
+      const updated = await onActivateSession(job);
+      const unitNumber = updated?.activeUnitNumber
+        ?? updated?.units?.find((u) => u.clientActivatedAt && u.status !== 'Completed')?.unitNumber;
+      if (unitNumber != null) {
+        setBrowseMode('open');
+        setFocusKey(`${job.id}-${unitNumber}`);
+      }
+    } finally {
+      setActivatingJobId(null);
+    }
+  };
+
   if (loading) {
     return <p className="p-6 text-sm text-muted-foreground">Loading jobs…</p>;
   }
@@ -305,7 +361,9 @@ export function ClientCompanyWorkbench({
   if (selectedCompany && selectedCategory) {
     const done = categoryAllItems.filter(({ job, unit }) => unitIsComplete(job, unit)).length;
     const total = categoryAllItems.length;
-    const openCount = total - done;
+    const openCount = categoryAllItems.filter(
+      ({ job, unit }) => !unitIsComplete(job, unit) && isSessionActive(job, unit),
+    ).length;
     const viewingCompleted = browseMode === 'completed';
 
     return (
@@ -368,8 +426,27 @@ export function ClientCompanyWorkbench({
                 <p className="font-medium text-muted-foreground">
                   {viewingCompleted
                     ? 'No completed items in this category yet.'
-                    : 'All items in this category are complete.'}
+                    : multiQtyAddable.length > 0
+                      ? 'No sessions in progress. Start one below when you need it.'
+                      : 'All items in this category are complete.'}
                 </p>
+                {!viewingCompleted && multiQtyAddable.length > 0 && onActivateSession && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {multiQtyAddable.map(({ job, remaining }) => (
+                      <button
+                        key={job.id}
+                        type="button"
+                        disabled={activatingJobId === job.id}
+                        onClick={() => void handleActivate(job)}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-primary text-primary-foreground rounded-lg disabled:opacity-50"
+                      >
+                        <Plus className="w-4 h-4" />
+                        {activatingJobId === job.id ? 'Starting…' : `Add ${job.service}`}
+                        <span className="text-xs opacity-80">({remaining} left)</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {!viewingCompleted && done > 0 && (
                   <button
                     type="button"
@@ -392,6 +469,23 @@ export function ClientCompanyWorkbench({
               </div>
             ) : current ? (
               <>
+                {!viewingCompleted && multiQtyAddable.length > 0 && onActivateSession && (
+                  <div className="flex flex-wrap gap-2 pb-2 border-b border-border">
+                    {multiQtyAddable.map(({ job, remaining }) => (
+                      <button
+                        key={job.id}
+                        type="button"
+                        disabled={activatingJobId === job.id}
+                        onClick={() => void handleActivate(job)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted disabled:opacity-50"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        {activatingJobId === job.id ? 'Starting…' : `Add ${job.service}`}
+                        <span className="text-xs text-muted-foreground">{remaining} left</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground mb-1">
@@ -494,7 +588,7 @@ export function ClientCompanyWorkbench({
 
   // Level 2 — categories for one company
   if (selectedCompany) {
-    const meta = companyMeta.get(selectedCompany) ?? { completed: 0, total: 0, needsSign: false };
+    const meta = companyMeta.get(selectedCompany) ?? { completed: 0, total: 0, open: 0, needsSign: false };
     return (
       <div className="space-y-4">
         <button
@@ -510,7 +604,7 @@ export function ClientCompanyWorkbench({
             <p className="text-sm text-muted-foreground mt-1">
               {browseMode === 'completed'
                 ? 'Browse completed items by category.'
-                : 'Choose a category — open items advance one at a time. Use History anytime.'}
+                : 'Choose a category. For multi-session lines, start a session when you need it — several can be in progress at once.'}
             </p>
           </div>
           <div className="flex gap-2">
@@ -521,7 +615,7 @@ export function ClientCompanyWorkbench({
                 browseMode === 'open' ? 'bg-primary text-primary-foreground border-primary' : 'border-border'
               }`}
             >
-              Open ({meta.total - meta.completed})
+              Open ({meta.open})
             </button>
             <button
               type="button"
@@ -565,7 +659,11 @@ export function ClientCompanyWorkbench({
                     <span className="text-base font-medium text-muted-foreground">
                       {browseMode === 'completed'
                         ? `${cat.completed} completed`
-                        : `${cat.open} open · ${cat.completed} done`}
+                        : cat.open > 0
+                          ? `${cat.open} open · ${cat.completed} done`
+                          : cat.remaining > 0
+                            ? `${cat.remaining} available to start`
+                            : `${cat.completed} done`}
                     </span>
                   </button>
                 </ProgressBorderFrame>
@@ -583,7 +681,7 @@ export function ClientCompanyWorkbench({
       <h3 className="text-sm font-medium text-muted-foreground">Companies</h3>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
         {companies.map((company) => {
-          const meta = companyMeta.get(company) ?? { completed: 0, total: 0, needsSign: false };
+          const meta = companyMeta.get(company) ?? { completed: 0, total: 0, open: 0, needsSign: false };
           const pct = meta.total > 0 ? meta.completed / meta.total : 0;
           const stats = categoryStats(jobs, company);
           const dropdownOpen = openDropdown === company;

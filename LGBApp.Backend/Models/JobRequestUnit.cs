@@ -17,6 +17,12 @@ public class JobRequestUnit
     public string AdminBypassNote { get; set; } = string.Empty;
     public DateTime? AdminBypassAt { get; set; }
     public int? AdminBypassByUserId { get; set; }
+    /// <summary>
+    /// Multi-qty only: when set, the client has claimed this session for work.
+    /// Null = dormant (hidden from portal open list until Activate).
+    /// Ignored when the parent job has TotalQty &lt;= 1.
+    /// </summary>
+    public DateTime? ClientActivatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public int? PackageScheduleItemId { get; set; }
     public ICollection<JobRequestUnitAssignee> Assignees { get; set; } = new List<JobRequestUnitAssignee>();

@@ -376,6 +376,87 @@ public static class JobRequestUnitService
     public static bool IsUserAssigned(JobRequestUnit unit, int userId) =>
         unit.Assignees.Any(a => a.UserId == userId) || unit.AssignedUserId == userId;
 
+    /// <summary>
+    /// Multi-qty dormancy: qty-1 jobs always count as active. Multi-qty units without
+    /// <see cref="JobRequestUnit.ClientActivatedAt"/> are dormant until Activate.
+    /// </summary>
+    public static bool IsSessionActive(JobRequest job, JobRequestUnit unit)
+    {
+        if (job.TotalQty <= 1)
+            return true;
+        if (unit.Status == "Completed")
+            return true;
+        return unit.ClientActivatedAt.HasValue;
+    }
+
+    public static bool IsSessionDormant(JobRequest job, JobRequestUnit unit) =>
+        job.TotalQty > 1
+        && unit.Status != "Completed"
+        && !unit.ClientActivatedAt.HasValue;
+
+    /// <summary>
+    /// Marks in-flight sessions as activated so they stay visible after introducing dormancy.
+    /// </summary>
+    public static async Task BackfillClientActivatedAsync(AppDbContext context, JobRequest job)
+    {
+        if (job.TotalQty <= 1)
+            return;
+
+        var units = job.Units.Count > 0
+            ? job.Units.ToList()
+            : await context.JobRequestUnits.Where(u => u.JobRequestId == job.JobRequestId).ToListAsync();
+
+        var unitIds = units.Where(u => !u.ClientActivatedAt.HasValue).Select(u => u.JobRequestUnitId).ToList();
+        if (unitIds.Count == 0)
+            return;
+
+        var moiUnitIds = await context.MOIForms
+            .Where(m => m.JobRequestUnitId != null && unitIds.Contains(m.JobRequestUnitId.Value))
+            .Select(m => m.JobRequestUnitId!.Value)
+            .ToListAsync();
+        var moaUnitIds = await context.MOAForms
+            .Where(m => m.JobRequestUnitId != null && unitIds.Contains(m.JobRequestUnitId.Value))
+            .Select(m => m.JobRequestUnitId!.Value)
+            .ToListAsync();
+
+        var now = DateTime.UtcNow;
+        foreach (var unit in units.Where(u => !u.ClientActivatedAt.HasValue))
+        {
+            var inFlight = unit.Status != "Pending"
+                || !string.IsNullOrWhiteSpace(unit.InternalHandoffStatus)
+                || !string.IsNullOrWhiteSpace(unit.WorkflowMode)
+                || unit.AdminBypassAt.HasValue
+                || moiUnitIds.Contains(unit.JobRequestUnitId)
+                || moaUnitIds.Contains(unit.JobRequestUnitId);
+            if (inFlight)
+                unit.ClientActivatedAt = now;
+        }
+    }
+
+    /// <summary>
+    /// Claims the lowest-numbered dormant unit on a multi-qty job. Returns null if none left.
+    /// Caller must save. Throws <see cref="DomainException"/> for qty-1 jobs.
+    /// </summary>
+    public static async Task<JobRequestUnit?> TryActivateNextSessionAsync(AppDbContext context, JobRequest job)
+    {
+        if (job.TotalQty <= 1)
+            throw new DomainException("This package line is a single session — nothing to add.", 400);
+
+        await SyncUnitsForJobAsync(context, job);
+        await context.Entry(job).Collection(j => j.Units).LoadAsync();
+        await BackfillClientActivatedAsync(context, job);
+
+        var next = job.Units
+            .Where(u => IsSessionDormant(job, u))
+            .OrderBy(u => u.UnitNumber)
+            .FirstOrDefault();
+        if (next == null)
+            return null;
+
+        next.ClientActivatedAt = DateTime.UtcNow;
+        return next;
+    }
+
     public static JobRequestUnitDto ToDto(JobRequestUnit unit)
     {
         var assignees = unit.Assignees
@@ -402,6 +483,7 @@ public static class JobRequestUnitService
             WorkflowMode = unit.WorkflowMode ?? string.Empty,
             AdminBypassNote = unit.AdminBypassNote ?? string.Empty,
             AdminBypassAt = unit.AdminBypassAt?.ToString("O"),
+            ClientActivatedAt = unit.ClientActivatedAt?.ToString("O"),
         };
     }
 

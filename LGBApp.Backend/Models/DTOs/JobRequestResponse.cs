@@ -36,4 +36,6 @@ public class JobRequestResponse
     public string DisplayStatusKey { get; set; } = string.Empty;
     /// <summary>MOI document title when set — preferred display name for the work item.</summary>
     public string? DocumentTitle { get; set; }
+    /// <summary>Set by activate-session to the newly claimed unit number.</summary>
+    public int? ActiveUnitNumber { get; set; }
 }

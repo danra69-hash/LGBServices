@@ -191,6 +191,8 @@ export interface JobRequestUnitDto {
   workflowMode?: string;
   adminBypassNote?: string;
   adminBypassAt?: string;
+  /** Multi-qty: ISO timestamp when client claimed this session; absent = dormant. */
+  clientActivatedAt?: string;
 }
 
 export interface WorkTrackerItemDto {
@@ -881,6 +883,13 @@ export async function getClientJobs(includeCompleted = false): Promise<JobReques
   return request<JobRequestResponse[]>(`/api/clientjobs/my-jobs${qs}`);
 }
 
+/** Claim the next dormant multi-qty session (client portal "Add"). */
+export async function activateClientSession(jobId: number): Promise<JobRequestResponse> {
+  return request<JobRequestResponse>(`/api/clientjobs/${jobId}/activate-session`, {
+    method: 'POST',
+  });
+}
+
 export async function getMyCompany(): Promise<CustomerResponse> {
   return request<CustomerResponse>('/api/clientportal/my-company');
 }
@@ -1512,4 +1521,24 @@ export function saveBlobAsFile(blob: Blob, filename: string): void {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+/** Fetch the whole printable pack for one task (optionally one session) as an HTML blob. */
+export async function downloadTaskPack(jobId: number, unitNumber?: number): Promise<Blob> {
+  const q = unitNumber ? `?unitNumber=${unitNumber}` : '';
+  return fetchAuthenticatedBlob(`/api/jobs/${jobId}/pack${q}`);
+}
+
+/** Open the task pack in a new tab, ready to print / save as PDF. */
+export async function openTaskPack(jobId: number, unitNumber?: number): Promise<void> {
+  const blob = await downloadTaskPack(jobId, unitNumber);
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  if (!win) {
+    // Popup blocked — fall back to a direct download so the action never silently fails.
+    const suffix = unitNumber ? `-s${unitNumber}` : '';
+    saveBlobAsFile(blob, `task-${jobId}${suffix}-pack.html`);
+  }
+  // Revoke after the new tab has had time to load the document.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
