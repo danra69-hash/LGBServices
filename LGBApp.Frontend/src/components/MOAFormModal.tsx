@@ -64,7 +64,7 @@ interface MOAFormModalProps {
   onSubmit: (data: any) => Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string } | void>;
   onSaveDraft?: (data: Record<string, unknown>) => Promise<{ id: number; jobId: number; unitNumber?: number; updatedAt?: string }>;
   onDirtyChange?: (dirty: boolean) => void;
-  onStartWorkflow?: (payload: Record<string, unknown>) => void | Promise<void>;
+  onStartWorkflow?: (payload: Record<string, unknown>, options?: { moaApprovers?: string[] }) => void | Promise<void>;
   onClientApprove?: (moaFormId: number, payload: { comments: string; signatureFileName?: string; signatureDataUrl?: string }) => void;
   onClientReject?: (moaFormId: number, reason: string) => void;
   onSharonApprove?: (jobId: number) => void;
@@ -155,6 +155,7 @@ export function MOAFormModal({
   );
   const [packChecklist, setPackChecklist] = useState<MoaPackChecklistDto>(emptyPackChecklist);
   const [packErrors, setPackErrors] = useState<string[]>([]);
+  const [moaApproversOverride, setMoaApproversOverride] = useState('');
   const [submitError, setSubmitError] = useState('');
   const packErrorsRef = useRef<HTMLDivElement | null>(null);
   const [stepComments, setStepComments] = useState('');
@@ -816,18 +817,36 @@ export function MOAFormModal({
                   </ul>
                 )}
                 {SHOW_MOA_SEQUENTIAL_WORKFLOW && onStartWorkflow && !viewMode && !isClientUser && (
-                  <button
-                    type="button"
-                    className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted"
-                    onClick={() => {
-                      const errors = validatePackChecklist();
-                      setPackErrors(errors);
-                      if (errors.length > 0) return;
-                      void onStartWorkflow(buildSubmitPayload());
-                    }}
-                  >
-                    Start internal routing (optional)
-                  </button>
+                  <div className="space-y-2">
+                    <label className="block text-xs text-muted-foreground">
+                      Optional: override MOA approvers for this job (comma-separated names). Leave blank to use company default.
+                    </label>
+                    <input
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm"
+                      placeholder="e.g. Datin Irene, Kevin Kuok"
+                      value={moaApproversOverride}
+                      onChange={(e) => setMoaApproversOverride(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted"
+                      onClick={() => {
+                        const errors = validatePackChecklist();
+                        setPackErrors(errors);
+                        if (errors.length > 0) return;
+                        const names = moaApproversOverride
+                          .split(',')
+                          .map((n) => n.trim())
+                          .filter(Boolean);
+                        void onStartWorkflow(
+                          buildSubmitPayload(),
+                          names.length > 0 ? { moaApprovers: names } : undefined,
+                        );
+                      }}
+                    >
+                      Start internal routing (optional)
+                    </button>
+                  </div>
                 )}
                 <p className="text-xs text-muted-foreground">
                   Complete the pack checklist and MOA details, then submit the draft for head secretary approval before client sign-off.

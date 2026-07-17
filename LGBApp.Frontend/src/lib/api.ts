@@ -143,6 +143,8 @@ export interface CustomerResponse {
   moiApproval: string[];
   moiApprovalMode?: 'AllRequired' | 'AnyOne';
   moa: string[];
+  /** Admin-set company MOA approver names (CubeV). */
+  moaApprovers?: string[];
   purchasedDate: string;
   expiryDate: string;
   packages: CustomerPackageDto[];
@@ -1251,8 +1253,16 @@ export async function updateMoaPack(id: number, data: {
   });
 }
 
-export async function startMoaWorkflow(id: number): Promise<FormResponse> {
-  return request<FormResponse>(`/api/moaforms/${id}/start-workflow`, { method: 'POST' });
+export async function startMoaWorkflow(
+  id: number,
+  options?: { moaApprovers?: string[] },
+): Promise<FormResponse> {
+  return request<FormResponse>(`/api/moaforms/${id}/start-workflow`, {
+    method: 'POST',
+    body: JSON.stringify({
+      moaApprovers: options?.moaApprovers ?? [],
+    }),
+  });
 }
 
 export async function getBillingParties(activeOnly = true, category?: string): Promise<BillingPartyDto[]> {

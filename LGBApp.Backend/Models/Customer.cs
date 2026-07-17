@@ -26,10 +26,12 @@ public class Customer
     public string? MoaFormTemplateCode { get; set; }
     /// <summary>Overrides division default MOA workflow template (MOA_NO_LOA, MOA_WITH_LOA, MOA_SWM).</summary>
     public string? MoaWorkflowTemplateCode { get; set; }
+    /// <summary>Admin-set ordered MOA approver display names (JSON string[]). Clients cannot edit.</summary>
+    public string MoaApproversJson { get; set; } = "[]";
     public string MoiJson { get; set; } = "[]";
     public string MoiApprovalJson { get; set; } = "[]";
     public string MoaJson { get; set; } = "[]";
-    /// <summary>AllRequired = every MOI approver must sign; AnyOne = one approver is enough.</summary>
+    /// <summary>Legacy multi-signer mode — CubeV mandates 1:1 matrix; UI hidden.</summary>
     public string MoiApprovalMode { get; set; } = MoiApprovalModes.AllRequired;
     public DateTime PurchasedDate { get; set; }
     public DateTime ExpiryDate { get; set; }

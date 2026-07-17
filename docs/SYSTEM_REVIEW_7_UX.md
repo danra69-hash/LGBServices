@@ -553,3 +553,28 @@ After Resend is configured on Railway, seed staff with `SEED_STAFF=true` + `SEED
 | `ryannnism@berkeley.edu` | ClientAdmin | Client portal / MOI |
 
 Both created/updated by `InternalStaffSeeder` when staff seed runs. Client links to the first Active customer.
+
+---
+
+## 12. CubeV ops conformance (2026-07-17)
+
+### In scope shipped
+
+| Workstream | What |
+|---|---|
+| B Staff | Real Cosec/Legal emails; Sharon + Poh Li Admin |
+| A Matrix | `MoiApprovalMatrixEntries` + 1:1 MOI bind/sign; client MOI policy UI removed |
+| E MOA Admin | `Customers.MoaApproversJson` + Start-MOA `MoaApproversOverrideJson` |
+| C Package notify | `CompletionNotifiedAt` → notify ClientSignatories when all package jobs Completed |
+| D Workdone | Idempotent import → `CompletedServices` (no new UI) |
+| F SOURCE | Upsert companies **rows 2–167 only** (`CubeVCustomerSeeder`); addon menu placeholders skipped |
+
+### Still out of scope
+
+W4 no-login email approval · W1 reminder scheduler · C3 mid-flight Cosec insert
+
+### Ops
+
+- Migration `20260717070000_Pg_CubeVOps` (+ SqliteSchemaMigrator)
+- Re-run `dotnet run -- seed-full` to upsert SOURCE 2–167 + workdone map
+- One-shot `SEED_STAFF=true` for Sharon/Poh Li real emails on Railway

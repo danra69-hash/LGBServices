@@ -6,27 +6,33 @@ using Microsoft.EntityFrameworkCore;
 namespace LGBApp.Backend.Data;
 
 /// <summary>
-/// Seeds customers / billing / division recommenders from CubeV COSEC Billing Tracking workbook.
-/// Idempotent: skips when "Cube Value Sdn Bhd" already exists.
-/// Sharon remains the Admin account from <see cref="InternalStaffSeeder"/>.
+/// Seeds customers / billing / division recommenders from CubeV SOURCE rows 2–167
+/// (first 166 real companies in cubev-init.json). Skips addon-menu placeholders.
+/// Idempotent upsert by company name.
 /// </summary>
 public static class CubeVCustomerSeeder
 {
-    private const string MarkerCompany = "Cube Value Sdn Bhd";
+    /// <summary>Excel SOURCE rows 2–167 → JSON companies[0..165].</summary>
+    public const int SourceCompanyCount = 166;
+
+    private static readonly HashSet<string> AddonMenuPlaceholders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Newly Incorp. Company (please specify)",
+        "Other Ad-hoc & Complex Works (please specify)",
+        "SSM lodgement fee for others (please specify)",
+    };
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
     };
 
-    public static void SeedIfNeeded(AppDbContext context)
-    {
-        if (context.Customers.Any(c => c.Company == MarkerCompany))
-        {
-            Console.WriteLine("[CubeV seed] Already initialised — skipping.");
-            return;
-        }
+    public static void SeedIfNeeded(AppDbContext context) => UpsertSourceCompanies(context);
 
+    /// <summary>Upsert SOURCE companies (rows 2–167). Safe to re-run.</summary>
+    public static void UpsertSourceCompanies(AppDbContext context)
+    {
         var data = LoadSeedData();
         if (data?.Companies == null || data.Companies.Count == 0)
         {
@@ -34,37 +40,99 @@ public static class CubeVCustomerSeeder
             return;
         }
 
-        Console.WriteLine($"[CubeV seed] Importing {data.Companies.Count} companies from CubeV…");
+        var sourceRows = data.Companies
+            .Take(SourceCompanyCount)
+            .Where(r => !string.IsNullOrWhiteSpace(r.Company)
+                        && !AddonMenuPlaceholders.Contains(r.Company.Trim()))
+            .ToList();
+
+        Console.WriteLine($"[CubeV seed] Upserting {sourceRows.Count} SOURCE companies (rows 2–167)…");
 
         ApplyDivisionRecommenders(context, data);
         var partyIds = EnsureBillingParties(context, data);
         var purchased = DateTime.UtcNow.Date.AddMonths(-1);
         var expiry = purchased.AddYears(1);
         var created = 0;
+        var updated = 0;
 
-        foreach (var row in data.Companies)
+        var existingByCompany = context.Customers
+            .Include(c => c.Packages)
+            .Include(c => c.AccountHolders)
+            .ToList()
+            .GroupBy(c => c.Company.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in sourceRows)
         {
-            if (string.IsNullOrWhiteSpace(row.Company))
-                continue;
-            if (context.Customers.Any(c => c.Company == row.Company))
-                continue;
-
+            var companyName = row.Company.Trim();
             var holders = BuildHoldersForCompany(row, data);
             var primary = holders.FirstOrDefault()
                 ?? new AccountHolderInput { Name = "Company Contact", Email = "", Moi = true };
 
-            var invoiceName = CleanParty(row.BillTo) ?? CleanParty(row.InvoiceBy) ?? row.Company;
-            var chargeName = CleanParty(row.ChargeTo) ?? row.Company;
+            var invoiceName = CleanParty(row.BillTo) ?? CleanParty(row.InvoiceBy) ?? companyName;
+            var chargeName = CleanParty(row.ChargeTo) ?? companyName;
             var invoiceId = ResolvePartyId(partyIds, invoiceName);
             var chargeId = ResolvePartyId(partyIds, chargeName);
-
             var pricing = BuildPricingJson(row);
-            var customer = new Customer
+
+            if (existingByCompany.TryGetValue(companyName, out var customer))
+            {
+                customer.Name = primary.Name;
+                customer.Email = primary.Email;
+                customer.Value = row.PackageValue;
+                customer.InvoiceBy = invoiceName;
+                customer.ChargeTo = chargeName;
+                customer.InvoiceByPartyIdsJson = JsonHelper.Serialize(invoiceId > 0 ? new List<int> { invoiceId } : new List<int>());
+                customer.ChargeToPartyIdsJson = JsonHelper.Serialize(chargeId > 0 ? new List<int> { chargeId } : new List<int>());
+                customer.Package = row.PackageName;
+                customer.PackageValue = row.PackageValue;
+                customer.Cosec = row.Cosec;
+                customer.DivisionGroupCode = row.DivisionCode ?? "";
+                customer.HasLoa = row.HasLoa;
+                customer.LoaHoldersJson = JsonHelper.Serialize(
+                    row.HasLoa
+                        ? holders.Where(h => h.Moa).Select(h => h.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList()
+                        : new List<string>());
+                customer.MoaWorkflowTemplateCode = string.IsNullOrWhiteSpace(row.MoaWorkflowTemplateCode)
+                    ? customer.MoaWorkflowTemplateCode
+                    : row.MoaWorkflowTemplateCode;
+                customer.MoiJson = JsonHelper.Serialize(holders.Where(h => h.Moi).Select(h => h.Name).ToList());
+                customer.MoiApprovalJson = JsonHelper.Serialize(holders.Where(h => h.MoiApproval).Select(h => h.Name).ToList());
+                customer.MoaJson = JsonHelper.Serialize(holders.Where(h => h.Moa).Select(h => h.Name).ToList());
+                customer.Status = "Active";
+
+                var pkg = customer.Packages.OrderByDescending(p => p.PurchasedDate).FirstOrDefault();
+                if (pkg == null)
+                {
+                    customer.Packages.Add(new CustomerPackage
+                    {
+                        PackageName = row.PackageName,
+                        PackageValue = row.PackageValue,
+                        Validity = "1 Year",
+                        PurchasedDate = purchased,
+                        ExpiryDate = expiry,
+                        Status = "Active",
+                        PricingJson = pricing,
+                    });
+                }
+                else
+                {
+                    pkg.PackageName = row.PackageName;
+                    pkg.PackageValue = row.PackageValue;
+                    pkg.PricingJson = pricing;
+                    pkg.Status = "Active";
+                }
+
+                updated++;
+                continue;
+            }
+
+            customer = new Customer
             {
                 Name = primary.Name,
                 Email = primary.Email,
                 Phone = "",
-                Company = row.Company.Trim(),
+                Company = companyName,
                 Status = "Active",
                 Value = row.PackageValue,
                 LastContact = DateTime.UtcNow,
@@ -114,11 +182,12 @@ public static class CubeVCustomerSeeder
             };
 
             context.Customers.Add(customer);
+            existingByCompany[companyName] = customer;
             created++;
         }
 
         context.SaveChanges();
-        Console.WriteLine($"[CubeV seed] Created {created} customers.");
+        Console.WriteLine($"[CubeV seed] SOURCE upsert done — {created} created, {updated} updated.");
     }
 
     private static CubeVSeedFile? LoadSeedData()

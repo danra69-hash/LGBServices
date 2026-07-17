@@ -51,6 +51,10 @@ public static class CustomerMapper
                 ? MoiApprovalModes.AllRequired
                 : customer.MoiApprovalMode,
             Moa = JsonHelper.Deserialize<List<string>>(customer.MoaJson),
+            MoaApprovers = JsonHelper.Deserialize<List<string>>(customer.MoaApproversJson ?? "[]")
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n.Trim())
+                .ToList(),
             PurchasedDate = primaryDto?.PurchasedDate ?? customer.PurchasedDate.ToString("yyyy-MM-dd"),
             ExpiryDate = primaryDto?.ExpiryDate ?? customer.ExpiryDate.ToString("yyyy-MM-dd"),
             Packages = packages,
@@ -119,6 +123,7 @@ public static class CustomerMapper
             MoiJson = JsonHelper.Serialize(moi),
             MoiApprovalJson = JsonHelper.Serialize(moiApproval),
             MoaJson = JsonHelper.Serialize(moa),
+            MoaApproversJson = JsonHelper.Serialize(moa),
             PurchasedDate = primary?.PurchasedDate ?? purchased,
             ExpiryDate = primary?.ExpiryDate ?? ComputeExpiryDate(purchased, request.Validity),
             Packages = packages,
@@ -169,6 +174,19 @@ public static class CustomerMapper
         customer.MoiJson = JsonHelper.Serialize(request.Moi);
         customer.MoiApprovalJson = JsonHelper.Serialize(request.MoiApproval);
         customer.MoaJson = JsonHelper.Serialize(request.Moa);
+        // Admin MOA list: explicit MoaApprovers wins; else mirror Moa flags from holders.
+        var moaApprovers = (request.MoaApprovers ?? [])
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (moaApprovers.Count == 0)
+            moaApprovers = (request.Moa ?? [])
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        customer.MoaApproversJson = JsonHelper.Serialize(moaApprovers);
         customer.LastContact = DateTime.TryParse(request.LastContact, out var lc) ? lc : customer.LastContact;
         customer.PurchasedDate = DateTime.TryParse(request.PurchasedDate, out var pd) ? pd : customer.PurchasedDate;
         customer.ExpiryDate = DateTime.TryParse(request.ExpiryDate, out var ed) ? ed : customer.ExpiryDate;

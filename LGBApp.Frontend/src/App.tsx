@@ -1058,10 +1058,13 @@ export default function App() {
     }
   };
 
-  const handleStartMoaWorkflow = async (draft: Record<string, unknown>) => {
+  const handleStartMoaWorkflow = async (
+    draft: Record<string, unknown>,
+    options?: { moaApprovers?: string[] },
+  ) => {
     try {
       const { id } = await saveMoaDraft(draft, { silent: true });
-      const saved = await startMoaWorkflow(id);
+      const saved = await startMoaWorkflow(id, options);
       setMOIDataForMOA((prev) => ({
         ...(prev ?? {}),
         ...draft,

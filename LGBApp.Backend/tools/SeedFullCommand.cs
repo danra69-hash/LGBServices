@@ -15,6 +15,7 @@ public static class SeedFullCommand
         Console.WriteLine("[seed-full] Importing CubeV customers and bootstrapping jobs…");
 
         CubeVCustomerSeeder.SeedIfNeeded(context);
+        CosecWorkdoneImporter.Seed(context);
         await BillingPartyService.SeedFromLegacyCustomerFieldsAsync(context);
         await CustomerClientAdminProvisioner.EnsureAllCustomersHaveClientAdminAsync(context);
         await CustomerSignatoryProvisioner.EnsureAllCustomerSignatoriesAsync(context);

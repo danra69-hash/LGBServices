@@ -304,8 +304,14 @@ public class MOAFormsController : ControllerBase
         return FormMapper.ToMoaResponse(form, workflow, customer);
     }
 
+    public class StartMoaWorkflowRequest
+    {
+        /// <summary>Optional Admin override of MOA approver display names for this job.</summary>
+        public List<string>? MoaApprovers { get; set; }
+    }
+
     [HttpPost("{id}/start-workflow")]
-    public async Task<ActionResult<FormResponse>> StartWorkflow(int id)
+    public async Task<ActionResult<FormResponse>> StartWorkflow(int id, [FromBody] StartMoaWorkflowRequest? request)
     {
         if (!AuthHelper.IsInternalStaff(User))
             return Forbid();
@@ -346,6 +352,16 @@ public class MOAFormsController : ControllerBase
         var (packValid, packErrors) = MoaPackChecklistService.Validate(form);
         if (!packValid)
             return BadRequest(new { message = "MOA pack checklist incomplete.", errors = packErrors });
+
+        if (request?.MoaApprovers is { Count: > 0 } && AuthHelper.IsAdmin(User))
+        {
+            form.MoaApproversOverrideJson = JsonHelper.Serialize(
+                request.MoaApprovers
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Select(n => n.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList());
+        }
 
         var customer = await WorkflowService.ResolveCustomerForCompanyAsync(_context, form.Company);
         await WorkflowService.InitializeMoaWorkflowAsync(_context, form, customer);

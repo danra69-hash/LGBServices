@@ -13,4 +13,6 @@ public class CustomerPackage
     public DateTime PurchasedDate { get; set; }
     public DateTime ExpiryDate { get; set; }
     public string Status { get; set; } = "Active";
+    /// <summary>When set, package-complete signatory notification already sent.</summary>
+    public DateTime? CompletionNotifiedAt { get; set; }
 }

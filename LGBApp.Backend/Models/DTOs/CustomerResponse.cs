@@ -28,6 +28,8 @@ public class CustomerResponse
     /// <summary>AllRequired | AnyOne — MOI only; MOA always requires all signers.</summary>
     public string MoiApprovalMode { get; set; } = MoiApprovalModes.AllRequired;
     public List<string> Moa { get; set; } = new();
+    /// <summary>Admin-set company MOA approver names (CubeV 1C). Empty = fall back to holders with NeedsMoa.</summary>
+    public List<string> MoaApprovers { get; set; } = new();
     public string PurchasedDate { get; set; } = string.Empty;
     public string ExpiryDate { get; set; } = string.Empty;
     public List<CustomerPackageDto> Packages { get; set; } = new();

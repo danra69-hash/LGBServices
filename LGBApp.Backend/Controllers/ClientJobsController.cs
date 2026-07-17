@@ -537,6 +537,7 @@ public class ClientJobsController : ControllerBase
                     Status = "Completed",
                     CreatedAt = DateTime.UtcNow,
                 });
+                await PackageCompletionNotifier.TryNotifyIfPackageCompleteAsync(_context, job);
             }
         }
         else if (request.MarkUnitIncomplete)

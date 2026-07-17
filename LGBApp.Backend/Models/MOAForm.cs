@@ -22,6 +22,8 @@ public class MOAForm
     public string PackChecklistJson { get; set; } = "{}";
     public string ClientApprovalsJson { get; set; } = "[]";
     public string RejectionsJson { get; set; } = "[]";
+    /// <summary>Optional Admin override of MOA approver names for this job (Start MOA).</summary>
+    public string MoaApproversOverrideJson { get; set; } = "[]";
     public DateTime? SharonApprovedAt { get; set; }
     public DateTime? SubmittedForAdminReviewAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
