@@ -467,6 +467,106 @@ else                                       → LoggingEmailSender
 
 ---
 
+## 10. Final review — post-implementation (2026-07-17, HEAD `865e697`)
+
+Method: reviewed all 8 commits after `beb876f`, traced each claim to running code, ran the full backend suite and the frontend build. Everything below is verified, not assumed.
+
+### 10.0 Correction to §9.2 — I was wrong
+
+**§9.2 claimed the source spreadsheet was not in the repo and made it a blocking gate. That was incorrect.**
+
+`docs/source/COSEC_Billing_Tracking_2026_CubeV.xlsx` has been committed **since 2026-07-13 09:50** — four days before §9 was written. Its tabs are exactly the ones the flowchart cites:
+
+`System Request` · `SOURCE` · `Approval Matrix` · `Cosec Email` · `Group Legal Email` · `Cosec Workdone Tracking` · `Annual Retainer Services`
+
+I searched for the flowchart's tab *references* but never looked in `docs/source/`. **Blocking Gate 1 was never real** — the data was available the whole time, which is why W2/W4/W5/W6 could proceed. The §9.2 gate is void; disregard it. The *principle* stands (never invent routing data), but the data exists and is authoritative. §9.3's gate was correctly resolved by the client ruling the flowchart authoritative.
+
+### 10.1 Verified working — real progress
+
+| Item | Verdict | Evidence |
+|---|---|---|
+| **W3 — Unset bypass CLOSED** | ✅ Correct | `JobWorkflowModes.BlocksCompleteUntilWorkflowChosen`; guard at `ClientJobsController.cs:478-488` sits **before** the MoiMoa/AdminBypass branches, so Unset can no longer fall through. `UnsetWorkflowBypassTests.cs`. Blocks *all* Unset — the safe choice. |
+| **MOA chain = flowchart MS1–MS7** | ✅ Exact | `BuildFlowchartSteps`: HeadOfGroupSecretarial → MoiRequester → MoiApprover → TehSW (BankSignatory) → GroupMandatory → CosecAdded → FinalApprover (Dato' Lim). Legacy `SeniorManagerCoSec`/`Dlcm` gone. `MoaFlowchartChainTests.cs` asserts all 3 templates. |
+| **Reseed runs & is idempotent** | ✅ Wired | `SeedReferenceData:27` → runs on every boot via `Program.cs:226`; early-returns on `FlowchartHeadStepKey`. |
+| **Approval Matrix seeded** | ✅ Real data | 36 rows / 34 requesters / 13 approvers, groups LGB·BELLWORTH·SWM — matches the flowchart's three groups. |
+| **1:1 MOI approval (R2)** | ✅ Wired | `TryBindMatrixApproverAsync` binds `RequiredApproverEmail` at submit (`JobHandoffService.cs:72`); `FindMoiApprovalHolderForUser` returns `null` for non-matrix approvers. |
+| **Seed JSONs ship in the image** | ✅ Verified | All 3 have `CopyToOutputDirectory=PreserveNewest` (`csproj:22-32`); Dockerfile copies `/app/publish`. **The silent-skip risk is closed.** |
+| **No secrets committed** | ✅ Clean | `ResendApiKey` is `""` in both appsettings; key comes from env. |
+| **Dual-provider migrations** | ✅ Correct | Postgres `Pg_MandatoryMoaApprovers`, `Pg_CubeVOps`; SQLite `EnsureColumn` for all new columns (`SqliteSchemaMigrator.cs:455-457`). |
+| **Build + tests** | ✅ Green | `dotnet test` → **100 passed, 0 failed** (was 85). Backend + `npm run build` both clean. |
+| **Deployed** | ✅ Live | Level with `origin/main` **and** `testing/main`; nothing unpushed. |
+
+**Print Pack (§6.3) shipped correctly** (`aeb9b44`) — all three files committed together; the untracked-file trap was avoided.
+
+### 10.2 🔴 HIGH — MS5 is not wired end-to-end: the Group mandatory approvers are dead data
+
+**FIXED 2026-07-17** (`ResolveAssigneeName` for `GroupMandatoryApprovers`):
+
+Priority is now **Start-MOA override → company `MoaApproversJson` → Group `DivisionGroup.MandatoryMoaApproversJson` (flowchart MS5)**. Bellworth/SWM group names (Kevin Kuok / Janice Lim / Ho De Leong / Shirley Nicholas) stamp onto the step when company list is empty. LGB group remains empty until Admin sets a company list or override.
+
+<details><summary>Original finding (kept for audit)</summary>
+
+**The most important finding of this review.** The flowchart's MS5 is *"Mandatory MOA approvers preset earlier follows Group."* The code presets them by Group — **and then never reads them.**
+
+- `EnsureGroupMandatoryApprovers` writes real names into `DivisionGroup.MandatoryMoaApproversJson`: **BELLWORTH → Kevin Kuok; SWM → Janice Lim, Ho De Leong, Shirley Nicholas; LGB → (empty)**.
+- Older `ResolveAssigneeName` read only form/customer JSON — never the DivisionGroup column.
+
+</details>
+
+### 10.3 🟠 MEDIUM — matrix binding fails open and silently
+
+**Partially addressed 2026-07-17:** bind failures now **log** submitter email + company + form id; `requestedByName` is read from form JSON (was hard-coded `null`). Still **fails open** to company MOI approvers when no matrix row — intentional for non-matrix companies; do not block without a further human ruling.
+
+### 10.4 🟠 MEDIUM — MS6 (Cosec-added approvers) is a placeholder that always skips
+
+`StepApplies`: `"CosecAdded" => false` — the step **never applies**. This is honestly commented (*"inserted at runtime (C3) — skip until then"*), but it means flowchart clauses **T2b and C3 remain unimplemented**, and the seeded step 6 is inert. Conformance-wise MS6 is **not** delivered.
+
+### 10.5 🔴 HIGH — the automation layer is still absent (unchanged)
+
+Re-verified at HEAD: **no `AddHostedService`, no `BackgroundService`, no reminder-state model, no approval tokens.**
+
+- **R3, R4, M3, M4 = 0%** — every timed reminder/escalation (24h×2, 48h prompt, 48h×3, 144h prompt). W1 not started.
+- **R5, M2 (no-login approval) = 0%** — W4 not started.
+- **B5 (quarterly billing report) = 0%**; **B6 invoice is still `text/plain`** (`InvoicesController.cs:173`).
+
+The eight commits advanced the **decision engine**; they did not touch the **unattended-operation layer**. That remains the bulk of the remaining work and the part the client's procedure actually runs on.
+
+### 10.6 🟡 Risks to confirm (not bugs — verify before client demo)
+
+1. **Real client emails are now seeded.** `InternalStaffSeeder` contains live `@taliworks.com.my`, `@lgb.com.my`, and personal Gmail addresses. Staff seeding runs when `SEED_STAFF=true` (or Development). **If `SEED_STAFF=true` and `Email:ResendApiKey` are both set in Railway, testing will email real client executives.** `WorkflowNotifier` sends on submit/approve/remind. **Verify both env vars in the Railway dashboard before any live exercise.** Emails cannot be recalled.
+2. **§9.5 still unanswered.** If `Email:ResendApiKey` is unset, `Program.cs:76-78` silently swaps in `LoggingEmailSender` — every notification goes to the log with no error. Still a 2-minute dashboard check; still not done.
+3. **Cancel-in-flight is silent.** `EnsureMoaFlowchartChain` sets Active MOA instances to `"Canceled"` with only a `Console.WriteLine` — no notification, no resume path. Harmless now (nothing was in flight), but it re-arms on any future chain change.
+4. **Seeded staff share one password** (`SEED_STAFF_PASSWORD`) with `MustChangePassword = true`. Acceptable, but real named executives now have accounts — confirm intended.
+
+### 10.7 Revised conformance score
+
+| Layer | Before (§9.6) | **Now** | Change |
+|---|---|---|---|
+| MOA chain **order** (MS1–MS7) | ❌ diverged | ✅ **exact** | Fixed (`614f209`) |
+| MOA **approvers** (MS5) | ❌ | ✅ **Group fallback wired** | Override → company → Group |
+| MS6 cosec-added (T2b/C3) | ❌ | ❌ **placeholder** | Inert by design |
+| MOI 1:1 approval (R2) | ⚠️ partial | ✅ **wired** (fails open) | Real progress |
+| Compliance gate (W3) | 🔴 open bypass | ✅ **closed** | Real progress |
+| Reminders/escalation (R3,R4,M3,M4) | 0% | **0%** | Untouched |
+| No-login approval (R5,M2) | 0% | **0%** | Untouched |
+| Billing (B5,B6) | ~50% | **~50%** | Untouched |
+
+**Clauses fully built: 11 → ~15 of 26.** The decision engine is now **substantially conformant**; MS5 is the one place where it *appears* conformant and isn't.
+
+**Overall: the engine is ~70% done; the automation is still ~0%.**
+
+### 10.8 Recommended next actions (ordered)
+
+1. ~~Check Railway env: `Email:ResendApiKey` and `SEED_STAFF`.~~ **Done 2026-07-17:** Resend key set; `SEED_STAFF=false` (safe).
+2. ~~Rule on MS5 (§10.2).~~ **Done:** flowchart Group is the default; Admin company/override still win when set.
+3. ~~Log matrix bind failures (§10.3).~~ **Done** (still fail-open; block-vs-fallback ruling still open if desired).
+4. **W1 scheduler** — the largest remaining piece; log-only first, sender last.
+5. Then W4 (no-login), MS6/C3, B6 (invoice PDF), B5 (quarterly report).
+
+**Do not regress:** the W3 Unset guard; the MS1–MS7 chain + its idempotent reseed; matrix binding at submit; Print Pack; the §5 UX fixes; MS5 Group fallback.
+
+---
+
 ## 10. Progress since §9 (executed 2026-07-17)
 
 ### 10.1 §9.5 Email delivery — **FAILING in production**

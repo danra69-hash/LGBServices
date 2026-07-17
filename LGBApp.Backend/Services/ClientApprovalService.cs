@@ -295,6 +295,10 @@ public static class ClientApprovalService
         return okMime && url.Length > comma + 4;
     }
 
+    public static string? ReadRequestedByName(MOIForm form) =>
+        ReadFormString(form.FormDataJson, "requestedBy")
+        ?? ReadFormString(form.FormDataJson, "projectInitiator");
+
     private static string? ReadFormString(string? json, string key)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;

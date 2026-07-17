@@ -113,11 +113,11 @@ public class MoaFlowchartChainTests
             [
                 new AccountHolder { Name = "Bob Approver", NeedsMoiApproval = true },
             ],
-            MoaApproversJson = JsonHelper.Serialize(new[] { "Kevin Kuok" }),
+            MoaApproversJson = "[]",
         };
         var division = new DivisionGroup
         {
-            MandatoryMoaApproversJson = JsonHelper.Serialize(new[] { "Ignored Division List" }),
+            MandatoryMoaApproversJson = JsonHelper.Serialize(new[] { "Kevin Kuok" }),
         };
 
         var requester = new WorkflowStepTemplate { AssigneeType = "ProjectInitiator" };
@@ -126,8 +126,17 @@ public class MoaFlowchartChainTests
         var moiApprover = new WorkflowStepTemplate { AssigneeType = "MoiApprovalHolder" };
         Assert.Equal("Bob Approver", WorkflowService.ResolveAssigneeName(moiApprover, customer, form, division));
 
+        // MS5: Group list wins when company list empty (flowchart)
         var group = new WorkflowStepTemplate { AssigneeType = "GroupMandatoryApprovers" };
         Assert.Equal("Kevin Kuok", WorkflowService.ResolveAssigneeName(group, customer, form, division));
+
+        // Company Admin list overrides Group
+        customer.MoaApproversJson = JsonHelper.Serialize(new[] { "Company Signer" });
+        Assert.Equal("Company Signer", WorkflowService.ResolveAssigneeName(group, customer, form, division));
+
+        // Start-MOA override wins over company
+        form.MoaApproversOverrideJson = JsonHelper.Serialize(new[] { "Override Signer" });
+        Assert.Equal("Override Signer", WorkflowService.ResolveAssigneeName(group, customer, form, division));
 
         var teh = new WorkflowStepTemplate
         {

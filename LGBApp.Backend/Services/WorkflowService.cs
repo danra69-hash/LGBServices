@@ -272,7 +272,7 @@ public static class WorkflowService
 
         if (step.AssigneeType == "GroupMandatoryApprovers")
         {
-            // Admin company MOA list (or Start-MOA override) — not division spreadsheet column.
+            // Priority: Start-MOA Admin override → company Admin list → Group (flowchart MS5).
             var fromForm = JsonHelper.Deserialize<List<string>>(form?.MoaApproversOverrideJson ?? "[]")
                 .Where(n => !string.IsNullOrWhiteSpace(n))
                 .Select(n => n.Trim())
@@ -287,7 +287,14 @@ public static class WorkflowService
             if (fromCustomer.Count > 0)
                 return string.Join(", ", fromCustomer);
 
-            return "MOA approvers (none set — Admin)";
+            var fromGroup = JsonHelper.Deserialize<List<string>>(division?.MandatoryMoaApproversJson ?? "[]")
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n.Trim())
+                .ToList();
+            if (fromGroup.Count > 0)
+                return string.Join(", ", fromGroup);
+
+            return "MOA approvers (none set)";
         }
 
         if (!string.IsNullOrWhiteSpace(step.AssigneeDisplayName))

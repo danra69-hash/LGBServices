@@ -73,7 +73,15 @@ public static class JobHandoffService
             context,
             form,
             submitter,
-            requestedByName: null);
+            requestedByName: ClientApprovalService.ReadRequestedByName(form));
+
+        if (string.IsNullOrWhiteSpace(form.RequiredApproverEmail)
+            && string.IsNullOrWhiteSpace(form.RequiredApproverName))
+        {
+            Console.WriteLine(
+                $"[MOI matrix] No Approval Matrix row for submitter={submitter?.Email ?? "(null)"} " +
+                $"company={form.Company} moiFormId={form.MOIFormId} — falling back to company MOI approvers.");
+        }
 
         var records = ClientApprovalService.ParseMoi(form);
         if (ClientApprovalService.MoiClientPhaseComplete(customer, form, records))
