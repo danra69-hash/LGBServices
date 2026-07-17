@@ -534,7 +534,7 @@ The eight commits advanced the **decision engine**; they did not touch the **una
 ### 10.6 🟡 Risks to confirm (not bugs — verify before client demo)
 
 1. **Real client emails are now seeded.** `InternalStaffSeeder` contains live `@taliworks.com.my`, `@lgb.com.my`, and personal Gmail addresses. Staff seeding runs when `SEED_STAFF=true` (or Development). **If `SEED_STAFF=true` and `Email:ResendApiKey` are both set in Railway, testing will email real client executives.** `WorkflowNotifier` sends on submit/approve/remind. **Verify both env vars in the Railway dashboard before any live exercise.** Emails cannot be recalled.
-2. **§9.5 still unanswered.** If `Email:ResendApiKey` is unset, `Program.cs:76-78` silently swaps in `LoggingEmailSender` — every notification goes to the log with no error. Still a 2-minute dashboard check; still not done.
+2. **Email delivery:** Railway has `Email__ResendApiKey` set (verified 2026-07-17 CLI). `SEED_STAFF=false`. Live sends are possible — treat demo traffic carefully.
 3. **Cancel-in-flight is silent.** `EnsureMoaFlowchartChain` sets Active MOA instances to `"Canceled"` with only a `Console.WriteLine` — no notification, no resume path. Harmless now (nothing was in flight), but it re-arms on any future chain change.
 4. **Seeded staff share one password** (`SEED_STAFF_PASSWORD`) with `MustChangePassword = true`. Acceptable, but real named executives now have accounts — confirm intended.
 
@@ -551,9 +551,9 @@ The eight commits advanced the **decision engine**; they did not touch the **una
 | No-login approval (R5,M2) | 0% | **0%** | Untouched |
 | Billing (B5,B6) | ~50% | **~50%** | Untouched |
 
-**Clauses fully built: 11 → ~15 of 26.** The decision engine is now **substantially conformant**; MS5 is the one place where it *appears* conformant and isn't.
+**Clauses fully built: 11 → ~16 of 26.** The decision engine is now **substantially conformant**, including MS5 Group fallback.
 
-**Overall: the engine is ~70% done; the automation is still ~0%.**
+**Overall: the engine is ~75% done; the automation is still ~0%.**
 
 ### 10.8 Recommended next actions (ordered)
 
@@ -678,3 +678,48 @@ W4 no-login email approval · W1 reminder scheduler · C3 mid-flight Cosec inser
 - Migration `20260717070000_Pg_CubeVOps` (+ SqliteSchemaMigrator)
 - Re-run `dotnet run -- seed-full` to upsert SOURCE 2–167 + workdone map
 - One-shot `SEED_STAFF=true` for Sharon/Poh Li real emails on Railway
+
+---
+
+## 13. Re-review (2026-07-17, HEAD `d5bcf14`)
+
+Method: re-traced §10 claims to current code after MS5 + CubeV ops landed. Suite **100** green. Remotes level.
+
+### Scorecard
+
+| Item | Status | Notes |
+|---|---|---|
+| §5 UX (Active work, team count, empty states) | ✅ | Do not regress |
+| W3 Unset bypass | ✅ | Guard before MoiMoa/AdminBypass |
+| Print Pack | ✅ | |
+| MOA MS1–MS7 order | ✅ | All 3 templates |
+| **MS5 Group mandatory** | ✅ | Override → company → Group |
+| MOI matrix 1:1 | ✅ | Logs miss; still fail-open |
+| Staff real emails | ✅ | SEED_STAFF=false on Railway |
+| SOURCE upsert 2–167 | ✅ | 166 companies; skip addon placeholders |
+| Workdone → CompletedServices | ✅ | Idempotent importer |
+| Package-complete notify | ⚠️ | In-app yes; LGB handoff path passes `notifier: null` so **email may not send** on that path |
+| Railway Resend | ✅ | Key set; SEED_STAFF=false |
+| MS6 Cosec-added (C3) | ❌ | `CosecAdded => false` — inert |
+| W1 reminders (R3/R4/M3/M4) | ❌ | No hosted service / ReminderLog |
+| W4 no-login approve (R5/M2) | ❌ | No tokens |
+| B6 invoice PDF | ❌ | Still `text/plain` `.txt` |
+| B5 quarterly report | ❌ | Absent |
+
+### Engine vs automation
+
+- **Decision engine ~75%** — chain order, MS5, matrix, W3, SOURCE/workdone ops are real.
+- **Unattended layer ~0%** — still the client's procedure gap (timed reminders, email-approve, billing PDF/report).
+
+### Doc hygiene
+
+- §10.7 previously said MS5 “appears conformant and isn't” — **corrected**; that was stale after `d5bcf14`.
+- Duplicate older “§10 Progress since §9” block still says Resend missing — **superseded** by §10.8 / §13 (Resend is set). Prefer §13 for ops truth.
+
+### Next (ordered)
+
+1. Optional: pass `WorkflowNotifier` into package-complete from `JobHandoffService` so email matches in-app.
+2. **W1 scheduler** (log-only + `ReminderLog` + injectable clock) — largest remaining piece.
+3. W4 no-login tokens → MS6/C3 → B6 PDF → B5 quarterly.
+
+**Do not regress:** W3, MS1–MS7, MS5 Group fallback, matrix bind, Print Pack, §5 UX.
