@@ -159,17 +159,7 @@ public class InvoicesController : ControllerBase
 
         if (invoice == null) return NotFound();
 
-        var lines = new[]
-        {
-            $"Invoice: {invoice.Invoice.InvoiceNumber}",
-            $"Customer: {invoice.Customer.Company}",
-            $"Amount: {invoice.Invoice.Currency} {invoice.Invoice.Amount:F2}",
-            $"Status: {invoice.Invoice.Status}",
-            $"Created: {invoice.Invoice.CreatedAt:u}",
-            invoice.Invoice.Notes ?? string.Empty,
-        };
-
-        var bytes = System.Text.Encoding.UTF8.GetBytes(string.Join(Environment.NewLine, lines));
-        return File(bytes, "text/plain", $"{invoice.Invoice.InvoiceNumber}.txt");
+        var bytes = InvoicePdfService.Build(invoice.Invoice, invoice.Customer);
+        return File(bytes, "application/pdf", $"{invoice.Invoice.InvoiceNumber}.pdf");
     }
 }

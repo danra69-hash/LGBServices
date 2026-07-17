@@ -701,7 +701,7 @@ Method: re-traced §10 claims to current code after MS5 + CubeV ops landed. Suit
 | MS6 Cosec-added (C3) | ❌ | `CosecAdded => false` — inert |
 | W1 reminders (R3/R4/M3/M4) | ❌ | No hosted service / ReminderLog |
 | W4 no-login approve (R5/M2) | ⚠️ | MOA steps only — single-use 72h email links; MOI still requires login |
-| B6 invoice PDF | ❌ | Still `text/plain` `.txt` |
+| B6 invoice PDF | ✅ | QuestPDF · `application/pdf` |
 | B5 quarterly report | ❌ | Absent |
 
 ### Engine vs automation
@@ -719,6 +719,6 @@ Method: re-traced §10 claims to current code after MS5 + CubeV ops landed. Suit
 1. ~~Optional: pass `WorkflowNotifier` into package-complete~~ **Done**
 2. ~~**W1 scheduler**~~ **Shipped foundation** — `ReminderWorker` + `ReminderLog` + caps; **log-only by default** (`Reminders:SendEmail=false`). Wall-clock UTC. Set `Reminders__SendEmail=true` on Railway only after verifying logs.
 3. ~~W4 no-login tokens~~ **Shipped for MOA steps** (not MOI; not stage-1 broadcast). Requires `App:PublicApiUrl`.
-4. MS6/C3 → B6 PDF → B5 quarterly.
+4. MS6/C3 → B5 quarterly. ~~B6 PDF~~ **Done (QuestPDF).**
 
 **Do not regress:** W3, MS1–MS7, MS5 Group fallback, matrix bind, Print Pack, §5 UX.
