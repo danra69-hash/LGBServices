@@ -99,6 +99,7 @@ public static class JobHandoffService
         }
 
         form.WorkflowState = MoiWorkflowStates.PendingClientMoiApproval;
+        form.ClientApprovalRequestedAt ??= DateTime.UtcNow;
         form.UpdatedAt = DateTime.UtcNow;
         job.Status = "In Progress";
 
@@ -491,7 +492,8 @@ public static class JobHandoffService
         AppDbContext context,
         JobRequest job,
         JobRequestUnit? unit = null,
-        MOAForm? form = null)
+        MOAForm? form = null,
+        WorkflowNotifier? notifier = null)
     {
         JobHandoffResolver.MirrorJobHandoff(job, unit, JobHandoffStatuses.Completed);
         if (unit != null)
@@ -525,7 +527,7 @@ public static class JobHandoffService
 
             await context.SaveChangesAsync();
             await WorkflowNotificationService.NotifyJobCompletedAsync(context, job);
-            await PackageCompletionNotifier.TryNotifyIfPackageCompleteAsync(context, job, notifier: null);
+            await PackageCompletionNotifier.TryNotifyIfPackageCompleteAsync(context, job, notifier);
             return;
         }
 

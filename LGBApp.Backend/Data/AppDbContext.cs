@@ -56,6 +56,7 @@ public class AppDbContext : DbContext
     public DbSet<WorkflowStepTemplate> WorkflowStepTemplates { get; set; }
     public DbSet<WorkflowInstance> WorkflowInstances { get; set; }
     public DbSet<WorkflowStepInstance> WorkflowStepInstances { get; set; }
+    public DbSet<ReminderLog> ReminderLogs { get; set; }
     public DbSet<ServiceJobForm> ServiceJobForms { get; set; }
     public DbSet<BillingParty> BillingParties { get; set; }
     public DbSet<JobItemDocument> JobItemDocuments { get; set; }
@@ -394,6 +395,14 @@ public class AppDbContext : DbContext
                 .WithMany(i => i.Steps)
                 .HasForeignKey(s => s.WorkflowInstanceId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ReminderLog>(entity =>
+        {
+            entity.HasKey(r => r.ReminderLogId);
+            entity.Property(r => r.Kind).HasMaxLength(80).IsRequired();
+            entity.Property(r => r.TargetEntityType).HasMaxLength(80).IsRequired();
+            entity.HasIndex(r => new { r.Kind, r.TargetEntityType, r.TargetEntityId }).IsUnique();
         });
 
         modelBuilder.Entity<AppNotification>(entity =>

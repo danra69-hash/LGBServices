@@ -523,13 +523,11 @@ Priority is now **Start-MOA override → company `MoaApproversJson` → Group `D
 
 ### 10.5 🔴 HIGH — the automation layer is still absent (unchanged)
 
-Re-verified at HEAD: **no `AddHostedService`, no `BackgroundService`, no reminder-state model, no approval tokens.**
+**Partial update 2026-07-17:** W1 **foundation shipped** (`ReminderWorker`, `ReminderLog`, `IAppClock`, R3/R4/M3/M4 evaluation). Default **`Reminders:SendEmail=false`** (log-only). Timed **email delivery** still off until ops flips the flag after log verification.
 
-- **R3, R4, M3, M4 = 0%** — every timed reminder/escalation (24h×2, 48h prompt, 48h×3, 144h prompt). W1 not started.
+- **R3, R4, M3, M4 = schedule engine ✅ / email delivery ⚠️ off by default**
 - **R5, M2 (no-login approval) = 0%** — W4 not started.
-- **B5 (quarterly billing report) = 0%**; **B6 invoice is still `text/plain`** (`InvoicesController.cs:173`).
-
-The eight commits advanced the **decision engine**; they did not touch the **unattended-operation layer**. That remains the bulk of the remaining work and the part the client's procedure actually runs on.
+- **B5 / B6** unchanged.
 
 ### 10.6 🟡 Risks to confirm (not bugs — verify before client demo)
 
@@ -547,7 +545,7 @@ The eight commits advanced the **decision engine**; they did not touch the **una
 | MS6 cosec-added (T2b/C3) | ❌ | ❌ **placeholder** | Inert by design |
 | MOI 1:1 approval (R2) | ⚠️ partial | ✅ **wired** (fails open) | Real progress |
 | Compliance gate (W3) | 🔴 open bypass | ✅ **closed** | Real progress |
-| Reminders/escalation (R3,R4,M3,M4) | 0% | **0%** | Untouched |
+| Reminders/escalation (R3,R4,M3,M4) | 0% | ⚠️ **engine on, email off** | W1 log-only default |
 | No-login approval (R5,M2) | 0% | **0%** | Untouched |
 | Billing (B5,B6) | ~50% | **~50%** | Untouched |
 
@@ -560,7 +558,7 @@ The eight commits advanced the **decision engine**; they did not touch the **una
 1. ~~Check Railway env: `Email:ResendApiKey` and `SEED_STAFF`.~~ **Done 2026-07-17:** Resend key set; `SEED_STAFF=false` (safe).
 2. ~~Rule on MS5 (§10.2).~~ **Done:** flowchart Group is the default; Admin company/override still win when set.
 3. ~~Log matrix bind failures (§10.3).~~ **Done** (still fail-open; block-vs-fallback ruling still open if desired).
-4. **W1 scheduler** — the largest remaining piece; log-only first, sender last.
+4. ~~**W1 scheduler**~~ **Foundation shipped** (log-only). Flip `Reminders__SendEmail=true` after verifying Railway logs.
 5. Then W4 (no-login), MS6/C3, B6 (invoice PDF), B5 (quarterly report).
 
 **Do not regress:** the W3 Unset guard; the MS1–MS7 chain + its idempotent reseed; matrix binding at submit; Print Pack; the §5 UX fixes; MS5 Group fallback.
@@ -718,8 +716,8 @@ Method: re-traced §10 claims to current code after MS5 + CubeV ops landed. Suit
 
 ### Next (ordered)
 
-1. Optional: pass `WorkflowNotifier` into package-complete from `JobHandoffService` so email matches in-app.
-2. **W1 scheduler** (log-only + `ReminderLog` + injectable clock) — largest remaining piece.
+1. ~~Optional: pass `WorkflowNotifier` into package-complete~~ **Done**
+2. ~~**W1 scheduler**~~ **Shipped foundation** — `ReminderWorker` + `ReminderLog` + caps; **log-only by default** (`Reminders:SendEmail=false`). Wall-clock UTC. Set `Reminders__SendEmail=true` on Railway only after verifying logs.
 3. W4 no-login tokens → MS6/C3 → B6 PDF → B5 quarterly.
 
 **Do not regress:** W3, MS1–MS7, MS5 Group fallback, matrix bind, Print Pack, §5 UX.

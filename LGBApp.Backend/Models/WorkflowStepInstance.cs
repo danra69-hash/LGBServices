@@ -13,6 +13,8 @@ public class WorkflowStepInstance
     public int? AssigneeUserId { get; set; }
     public string AssigneeName { get; set; } = string.Empty;
     public string Status { get; set; } = "Pending";
+    /// <summary>When this step became Active (anchor for M3/M4 reminders).</summary>
+    public DateTime? ActivatedAt { get; set; }
     public int? ApprovedByUserId { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public string Comments { get; set; } = string.Empty;

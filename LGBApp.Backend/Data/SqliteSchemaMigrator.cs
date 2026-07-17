@@ -458,7 +458,30 @@ public static class SqliteSchemaMigrator
         EnsureColumn(context, "MOIForms", "RequiredApproverName", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(context, "MOIForms", "RequiredApproverEmail", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(context, "CustomerPackages", "CompletionNotifiedAt", "TEXT NULL");
+        EnsureColumn(context, "MOIForms", "ClientApprovalRequestedAt", "TEXT NULL");
+        EnsureColumn(context, "WorkflowStepInstances", "ActivatedAt", "TEXT NULL");
         EnsureMoiApprovalMatrixTable(context);
+        EnsureReminderLogsTable(context);
+    }
+
+    private static void EnsureReminderLogsTable(AppDbContext context)
+    {
+        if (TableExists(context, "ReminderLogs"))
+            return;
+        context.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "ReminderLogs" (
+                "ReminderLogId" INTEGER NOT NULL CONSTRAINT "PK_ReminderLogs" PRIMARY KEY AUTOINCREMENT,
+                "Kind" TEXT NOT NULL,
+                "TargetEntityType" TEXT NOT NULL,
+                "TargetEntityId" INTEGER NOT NULL,
+                "SentCount" INTEGER NOT NULL DEFAULT 0,
+                "LastSentAt" TEXT NULL,
+                "ClaimedUntil" TEXT NULL,
+                "CreatedAt" TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_ReminderLogs_Kind_TargetEntityType_TargetEntityId"
+                ON "ReminderLogs" ("Kind", "TargetEntityType", "TargetEntityId");
+            """);
     }
 
     private static void EnsureMoiApprovalMatrixTable(AppDbContext context)

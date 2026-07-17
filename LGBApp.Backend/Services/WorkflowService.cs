@@ -233,6 +233,7 @@ public static class WorkflowService
                 AssigneeUserId = assigneeUserId,
                 AssigneeName = assigneeName,
                 Status = order == 1 ? "Active" : "Pending",
+                ActivatedAt = order == 1 ? DateTime.UtcNow : null,
             });
             order++;
         }
@@ -457,6 +458,7 @@ public static class WorkflowService
         if (next != null)
         {
             next.Status = "Active";
+            next.ActivatedAt ??= DateTime.UtcNow;
             instance.CurrentStepOrder = next.StepOrder;
         }
         else

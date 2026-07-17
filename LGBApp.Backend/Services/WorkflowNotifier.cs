@@ -170,6 +170,85 @@ public class WorkflowNotifier
         return ids.Distinct().ToList();
     }
 
+    public async Task NotifyMoiRequesterPromptAsync(JobRequest job, Customer customer, MOIForm form)
+    {
+        var title = DisplayTitle(job, form);
+        var userIds = new List<int>();
+        // Prefer submitter / holders who need MOI (requesters), else customer client users.
+        var requesters = customer.AccountHolders.Where(h => h.NeedsMoi).ToList();
+        userIds.AddRange(await ResolveUserIdsAsync(requesters, customer.CustomerId));
+        if (userIds.Count == 0 && customer.CustomerId > 0)
+        {
+            userIds = await _context.Users.AsNoTracking()
+                .Where(u => u.CustomerId == customer.CustomerId
+                    && (u.Role == UserRoles.ClientAdmin || u.Role == UserRoles.ClientSignatory))
+                .Select(u => u.UserId)
+                .ToListAsync();
+        }
+
+        var message = $"{job.Customer} — {title} is still awaiting MOI approval after 48 hours.";
+        await WorkflowNotificationService.NotifyUsersAsync(
+            _context, userIds, "moi_requester_prompt", "MOI still awaiting approval", message,
+            job.JobRequestId, customer.CustomerId);
+
+        await EmailUsersAsync(
+            userIds,
+            "Update: MOI still awaiting approval — " + job.Customer,
+            BuildActionBody(job, title, "MOI", "Your MOI has been waiting 48+ hours for approval. Follow up with the approver if needed."));
+    }
+
+    public async Task NotifyMoaStepReminderAsync(JobRequest job, Customer customer, MOAForm form, WorkflowStepInstance step)
+    {
+        var title = DisplayTitle(job, null);
+        var message = $"{job.Customer} — MOA step “{step.DisplayName}” ({step.AssigneeName}) is still awaiting action.";
+        var userIds = new List<int>();
+        if (step.AssigneeUserId.HasValue)
+            userIds.Add(step.AssigneeUserId.Value);
+        else if (!string.IsNullOrWhiteSpace(step.AssigneeName))
+        {
+            var names = step.AssigneeName.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var holders = customer.AccountHolders
+                .Where(h => names.Any(n => h.Name.Equals(n, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            userIds.AddRange(await ResolveUserIdsAsync(holders, customer.CustomerId));
+            // Also match internal users by name
+            var byName = await _context.Users.AsNoTracking()
+                .Where(u => names.Contains(u.Name))
+                .Select(u => u.UserId)
+                .ToListAsync();
+            userIds.AddRange(byName);
+        }
+
+        await WorkflowNotificationService.NotifyUsersAsync(
+            _context, userIds.Distinct().ToList(), "moa_step_reminder", "MOA step awaiting action", message,
+            job.JobRequestId, customer.CustomerId);
+
+        await EmailUsersAsync(
+            userIds,
+            "Reminder: MOA approval — " + job.Customer,
+            BuildActionBody(job, title, "MOA", $"Step “{step.DisplayName}” still needs your action."));
+    }
+
+    public async Task NotifyMoaCosecStalledAsync(JobRequest job, MOAForm form, WorkflowStepInstance step)
+    {
+        var title = string.IsNullOrWhiteSpace(job.Service) ? job.TaskType : job.Service;
+        var cosecIds = await _context.Users.AsNoTracking()
+            .Where(u => u.Role == UserRoles.Admin || u.Role == UserRoles.User)
+            .Select(u => u.UserId)
+            .ToListAsync();
+
+        var message = $"{job.Customer} — MOA step “{step.DisplayName}” has been active over 144 hours.";
+        await WorkflowNotificationService.NotifyUsersAsync(
+            _context, cosecIds, "moa_cosec_stalled", "MOA stage stalled", message,
+            job.JobRequestId, job.CustomerId);
+
+        await EmailUsersAsync(
+            cosecIds,
+            "Alert: MOA stage stalled — " + job.Customer,
+            BuildActionBody(job, title, "MOA",
+                $"Step “{step.DisplayName}” ({step.AssigneeName}) has had no approval for 144+ hours. Please follow up."));
+    }
+
     public async Task EmailUserIdsAsync(IEnumerable<int> userIds, string subject, string textBody) =>
         await EmailUsersAsync(userIds, subject, textBody);
 

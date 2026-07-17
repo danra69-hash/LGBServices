@@ -604,7 +604,7 @@ public class JobRequestsController : ControllerBase
                         return (false, (IActionResult)Forbid());
 
                     var moaForm = await ResolveMoaFormForHandoffAsync(job, unitNumber);
-                    await JobHandoffService.OnExecutionCompletedAsync(_context, job, unit, moaForm);
+                    await JobHandoffService.OnExecutionCompletedAsync(_context, job, unit, moaForm, _notifier);
                 }
                 else
                 {

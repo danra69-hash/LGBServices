@@ -26,6 +26,8 @@ public class MOIForm
     /// <summary>CubeV 1:1 matrix — set on submit from requester email.</summary>
     public string RequiredApproverName { get; set; } = string.Empty;
     public string RequiredApproverEmail { get; set; } = string.Empty;
+    /// <summary>When MOI entered PendingClientMoiApproval (anchor for R3/R4 reminders).</summary>
+    public DateTime? ClientApprovalRequestedAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     /// <summary>N2: optimistic concurrency token (rotated on every write).</summary>
