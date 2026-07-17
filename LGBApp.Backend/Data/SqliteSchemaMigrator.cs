@@ -451,6 +451,8 @@ public static class SqliteSchemaMigrator
                     WHERE m."JobRequestUnitId" = "JobRequestUnits"."JobRequestUnitId")
               );
             """);
+
+        EnsureColumn(context, "DivisionGroups", "MandatoryMoaApproversJson", "TEXT NOT NULL DEFAULT '[]'");
     }
 
     private static void EnsureColumn(AppDbContext context, string table, string column, string definition)

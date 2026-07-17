@@ -277,6 +277,7 @@ public class AppDbContext : DbContext
             entity.Property(g => g.Code).HasMaxLength(50).IsRequired();
             entity.Property(g => g.Name).HasMaxLength(200).IsRequired();
             entity.Property(g => g.MoaWorkflowTemplateCode).HasMaxLength(50);
+            entity.Property(g => g.MandatoryMoaApproversJson).HasMaxLength(2000);
         });
 
         modelBuilder.Entity<DivisionGroupRecommender>(entity =>

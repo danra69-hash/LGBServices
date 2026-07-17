@@ -518,3 +518,38 @@ Followed §8 steps exactly (three files only, route match verified, build+85 tes
 **Immediate next (not blocked):** set Railway Resend key (§10.1) → W7 drive S2/B4/C2 in live app → W1 scheduler foundation (log-only first).
 
 **Do not start:** W2/W4/W5 until §10.5 answers; W6 B6 PDF after PDF-library choice from human.
+
+---
+
+## 11. Human rulings + W5 shipped (2026-07-17)
+
+### 11.1 Rulings (locked)
+
+| # | Answer |
+|---|---|
+| 1 | Flowchart MS1–MS7 is authoritative over seeded chain |
+| 2 | Same replacement for `MOA_NO_LOA`, `MOA_WITH_LOA`, `MOA_SWM` |
+| 3 | `MsTeh` / Teh SW = `teh@taliworks.com.my`; `Dlcm` / Dato' Lim = `lcm@lgbgroup.com` |
+| 4 | **B — cancel in-flight** Active MOA `WorkflowInstance` rows on upgrade (only Ryan using live) |
+| 5 | Unset complete blocked; AdminBypass remains the one non-MOI path |
+
+### 11.2 W5 chain reseed — shipped
+
+- Templates rebuilt to MS1–MS7 (`HeadOfGroupSecretarial` … `FinalApprover` / Dato' Lim).
+- `CosecAdded` condition skips MS6 until C3 lands.
+- Active MOA workflows → `Canceled` once on upgrade; `GetWorkflowForMoaAsync` ignores Canceled so Start Workflow can re-init.
+- `DivisionGroup.MandatoryMoaApproversJson` + CubeV names for Bellworth/SWM.
+- Tests: `MoaFlowchartChainTests` — suite **97** green.
+
+**Deferred (still W5):** T3 last-point field, C3 Cosec insert-step, M1 broadcast, M5 bounce-on-comment.
+
+### 11.3 Live email-chain test accounts
+
+After Resend is configured on Railway, seed staff with `SEED_STAFF=true` + `SEED_STAFF_PASSWORD=…`:
+
+| Email | Role | Use |
+|---|---|---|
+| `ryannnism@gmail.com` | Admin (Sharon-class) | Intake / MOA approve |
+| `ryannnism@berkeley.edu` | ClientAdmin | Client portal / MOI |
+
+Both created/updated by `InternalStaffSeeder` when staff seed runs. Client links to the first Active customer.

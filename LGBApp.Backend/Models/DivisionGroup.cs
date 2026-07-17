@@ -9,6 +9,8 @@ public class DivisionGroup
     public string MoaWorkflowTemplateCode { get; set; } = "MOA_NO_LOA";
     public string? DefaultMoiFormTemplateCode { get; set; }
     public string? DefaultMoaFormTemplateCode { get; set; }
+    /// <summary>Display names for flowchart MS5 (group mandatory MOA approvers). JSON string[].</summary>
+    public string MandatoryMoaApproversJson { get; set; } = "[]";
     public bool IsActive { get; set; } = true;
     public ICollection<DivisionGroupRecommender> Recommenders { get; set; } = new List<DivisionGroupRecommender>();
 }

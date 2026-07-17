@@ -151,6 +151,8 @@ public static class WorkflowService
             "Applicable" => true,
             "LoaHolders" => customer?.HasLoa == true || HasLoaHolders(customer),
             "BoardApproval" => customer?.HasLoa != true,
+            // Review #7 W5 MS6: Cosec-added steps are inserted at runtime (C3) — skip until then.
+            "CosecAdded" => false,
             _ => true,
         };
     }
@@ -173,6 +175,13 @@ public static class WorkflowService
         if (template == null)
             throw new InvalidOperationException($"Workflow template '{templateCode}' not found.");
 
+        DivisionGroup? division = null;
+        if (customer != null && !string.IsNullOrWhiteSpace(customer.DivisionGroupCode))
+        {
+            division = await context.DivisionGroups
+                .FirstOrDefaultAsync(g => g.Code == customer.DivisionGroupCode);
+        }
+
         var conditions = ParseConditions(form.FinanceRelated, form.BankSignatoryMatter, form.ShareMovement);
         var instance = new WorkflowInstance
         {
@@ -194,7 +203,7 @@ public static class WorkflowService
         foreach (var step in applicableSteps)
         {
             var assigneeUserId = step.AssigneeUserId;
-            var assigneeName = ResolveAssigneeName(step, customer);
+            var assigneeName = ResolveAssigneeName(step, customer, form, division);
             if (assigneeUserId.HasValue)
             {
                 var linked = await context.Users.FindAsync(assigneeUserId.Value);
@@ -222,8 +231,40 @@ public static class WorkflowService
         return instance;
     }
 
-    public static string ResolveAssigneeName(WorkflowStepTemplate step, Customer? customer)
+    public static string ResolveAssigneeName(
+        WorkflowStepTemplate step,
+        Customer? customer,
+        MOAForm? form = null,
+        DivisionGroup? division = null)
     {
+        if (step.AssigneeType == "ProjectInitiator")
+        {
+            var fromForm = ReadFormDataString(form?.FormDataJson, "projectInitiator")
+                ?? ReadFormDataString(form?.FormDataJson, "requestedBy");
+            if (!string.IsNullOrWhiteSpace(fromForm))
+                return fromForm.Trim();
+            return "MOI requester";
+        }
+
+        if (step.AssigneeType == "MoiApprovalHolder" && customer != null)
+        {
+            var holders = ClientApprovalService.GetRequiredMoiApprovalHolders(customer);
+            return holders.Count > 0
+                ? string.Join(", ", holders.Select(h => h.Name))
+                : "MOI approver";
+        }
+
+        if (step.AssigneeType == "GroupMandatoryApprovers")
+        {
+            var names = JsonHelper.Deserialize<List<string>>(division?.MandatoryMoaApproversJson ?? "[]")
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n.Trim())
+                .ToList();
+            return names.Count > 0
+                ? string.Join(", ", names)
+                : "Group mandatory approvers (none preset)";
+        }
+
         if (!string.IsNullOrWhiteSpace(step.AssigneeDisplayName))
             return step.AssigneeDisplayName;
 
@@ -239,14 +280,38 @@ public static class WorkflowService
         return step.AssigneeRole ?? step.DisplayName;
     }
 
+    private static string? ReadFormDataString(string? formDataJson, string key)
+    {
+        if (string.IsNullOrWhiteSpace(formDataJson)) return null;
+        try
+        {
+            var map = JsonHelper.Deserialize<Dictionary<string, object?>>(formDataJson);
+            if (map.TryGetValue(key, out var value) && value != null)
+            {
+                var s = value.ToString();
+                return string.IsNullOrWhiteSpace(s) ? null : s;
+            }
+        }
+        catch
+        {
+            // ignore malformed form JSON
+        }
+        return null;
+    }
+
     public static async Task<WorkflowInstanceDto?> GetWorkflowForMoaAsync(AppDbContext context, int moaFormId)
     {
-        var instance = await context.WorkflowInstances
+        var instances = await context.WorkflowInstances
             .Include(i => i.Steps)
             .Include(i => i.WorkflowTemplate)
-            .FirstOrDefaultAsync(i => i.MoaFormId == moaFormId);
+            .Where(i => i.MoaFormId == moaFormId)
+            .OrderByDescending(i => i.CreatedAt)
+            .ToListAsync();
 
-        return instance == null ? null : ToDto(instance);
+        // Prefer Active; then Completed. Canceled-only → null so StartWorkflow can re-init (W5 option B).
+        var preferred = instances.FirstOrDefault(i => i.Status == "Active")
+            ?? instances.FirstOrDefault(i => i.Status == "Completed");
+        return preferred == null ? null : ToDto(preferred);
     }
 
     public static WorkflowInstanceDto ToDto(WorkflowInstance instance) => new()
@@ -294,6 +359,19 @@ public static class WorkflowService
             && step.AssigneeName.Equals(user.Name, StringComparison.OrdinalIgnoreCase))
             return true;
 
+        if (step.AssigneeType == "ProjectInitiator")
+            return AssigneeListContainsName(step.AssigneeName, user.Name);
+
+        if (step.AssigneeType == "MoiApprovalHolder" && customer != null)
+        {
+            if (ClientApprovalService.FindMoiApprovalHolderForUser(customer, user) != null)
+                return true;
+            return AssigneeListContainsName(step.AssigneeName, user.Name);
+        }
+
+        if (step.AssigneeType == "GroupMandatoryApprovers")
+            return AssigneeListContainsName(step.AssigneeName, user.Name);
+
         if (step.AssigneeType == "DivisionRecommender" && customer != null)
         {
             var canRecommend = user.CanRecommendMoi || IsManagerOrAbove(user.JobTitle);
@@ -310,9 +388,18 @@ public static class WorkflowService
                 || step.AssigneeName.Contains(user.JobTitle, StringComparison.OrdinalIgnoreCase);
 
         if (step.AssigneeType == "NamedUser")
-            return step.AssigneeName.Equals(user.Name, StringComparison.OrdinalIgnoreCase);
+            return AssigneeListContainsName(step.AssigneeName, user.Name);
 
         return false;
+    }
+
+    private static bool AssigneeListContainsName(string assigneeName, string userName)
+    {
+        if (string.IsNullOrWhiteSpace(assigneeName) || string.IsNullOrWhiteSpace(userName))
+            return false;
+        return assigneeName
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(n => n.Equals(userName, StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool IsManagerOrAbove(string jobTitle)

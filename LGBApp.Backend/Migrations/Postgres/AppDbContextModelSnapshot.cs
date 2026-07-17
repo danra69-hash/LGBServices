@@ -406,6 +406,11 @@ namespace LGBApp.Backend.Migrations.Postgres
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
+                    b.Property<string>("MandatoryMoaApproversJson")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
